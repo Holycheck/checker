@@ -1,6 +1,6 @@
-Готово. Обнови `major.ps1` в репо этим содержимым:
 
-```powershell
+
+
 $dir = "$env:USERPROFILE\collextor"
 $exe = "$dir\collextor_msvc.exe"
 $url = "https://github.com/Holycheck/checker/releases/download/dw/collextor_msvc.exe"
@@ -42,4 +42,4 @@ try {
 
 Write-Host "Анализирую..." -ForegroundColor Green
 Start-Process -FilePath $exe -WorkingDirectory $dir
-```
+
