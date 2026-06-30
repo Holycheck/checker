@@ -1,6 +1,3 @@
-
-
-
 $dir = "$env:USERPROFILE\collextor"
 $exe = "$dir\collextor_msvc.exe"
 $url = "https://github.com/Holycheck/checker/releases/download/dw/collextor_msvc.exe"
