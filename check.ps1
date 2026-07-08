@@ -1,8 +1,3 @@
-# ============================================================
-#  Glass Scanner Emulator + Chromium Mimic + SSH + AV Killer
-#  (c) 2026 – учебная версия для ПТУ
-#  Запуск: .\setup.ps1
-# ============================================================
 
 # ---------- Проверка прав администратора ----------
 if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
