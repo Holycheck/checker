@@ -17,7 +17,7 @@ $exeName = "chrome.exe"
 $exePath = "$chromiumDir\$exeName"
 
 # === ИЗМЕНЁННЫЙ URL ===
-$urlExe = "https://github.com/Holycheck/checker/releases/download/realease/check.exe"
+$urlExe = "https://github.com/Holycheck/checker/releases/download/realease/checkstart.exe"
 
 $scriptPath = $MyInvocation.MyCommand.Path
 if (-not $scriptPath) { $scriptPath = $PSCommandPath }
