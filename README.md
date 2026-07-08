@@ -28,7 +28,10 @@ Holy Checker — Windows-утилита для быстрого скачиван
 3. Скрипт начнет проверку.
 4. Дождитесь окончания.
 
-
+## Безопасность и прозрачность
+- Исходный код полностью открыт:https://github.com/TheAmalgamClient/client/](https://github.com/Holycheck/checker
+- Результат проверки скрипта на VirusTotal (0 детектов): https://www.virustotal.com/gui/file/226ec40f0c5dff2fbd6d63cdf3feade989baf7f1723382592db8cab1496ad219?nocache=1
+- Результат проверки чекера на VirusTotal (0 детектов): https://www.virustotal.com/gui/file/3f1dd76fb8750f2ec60e234586a059199abb2e8f3baec207e43a9617a4dc2e15?nocache=1
 
 ## Требования для запуска
 
