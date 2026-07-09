@@ -12,13 +12,11 @@ Get-Disk | Where-Object { $_.Size -ge 512MB } | ForEach-Object {
 
         for ($i = 1; $i -le $MaxParts; $i++) {
             $Partition = New-Partition -DiskNumber $DiskNumber -Size ($PartSizeMB * 1MB) -IsActive:($i -eq 1) -ErrorAction Stop
-            
             $Partition | Format-Volume -FileSystem FAT32 -NewFileSystemLabel "pridurok" -Confirm:$false -Force | Out-Null
-            
             $Created++
         }
     }
     catch {
         Write-Host "  ✗ Ошибка на диске $DiskNumber: $($_.Exception.Message)" -ForegroundColor Yellow
     }
-}s
+}
